@@ -40,9 +40,10 @@ def recv_payload(sock, sk):
 
 class ChatProtocolTest(unittest.TestCase):
     def setUp(self):
+        server_script = os.path.join(os.path.dirname(__file__), "chat_server.py")
         self.server = subprocess.Popen([
             sys.executable,
-            os.path.join("netsec3.v3", "chat_server.py"),
+            server_script,
             str(SERVER_PORT),
         ])
         time.sleep(1.0)
