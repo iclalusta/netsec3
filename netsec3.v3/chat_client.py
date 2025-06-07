@@ -11,6 +11,7 @@ import os
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator, ValidationError
+import re
 from rich.console import Console
 from rich.theme import Theme
 from rich.progress import Progress
@@ -56,6 +57,14 @@ command_completer = WordCompleter(
 non_empty_validator = Validator.from_callable(
     lambda t: len(t.strip()) > 0,
     error_message="Input required",
+    move_cursor_to_end=True,
+)
+
+# Username must be 3-16 characters of letters, numbers or underscore
+username_re = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+username_validator = Validator.from_callable(
+    lambda t: bool(username_re.match(t.strip())),
+    error_message="Username must start with a letter and contain only letters, numbers or '_' (3-16 chars)",
     move_cursor_to_end=True,
 )
 
@@ -275,7 +284,11 @@ def client_main_loop(sock, server_address):
         stop_event.set()
         return
 
-    console.print("\nAvailable commands: signup, signin, message <target> <content>, broadcast <content>, greet, help, logs, exit", style="system")
+    console.print(
+        "\nAvailable commands: signup, signin, message <target> <content>, broadcast <content>, greet, help, logs, exit",
+        style="system",
+    )
+    console.print("Type 'help' at any time for a command list.", style="system")
     while not stop_event.is_set():
         try:
             action_input = session.prompt(custom_prompt, completer=command_completer).strip()
@@ -286,24 +299,50 @@ def client_main_loop(sock, server_address):
                 continue
 
             if action_cmd == "signup":
-                uname = session.prompt("Enter username for signup: ", validator=non_empty_validator).strip()
-                pword = session.prompt("Enter password for signup: ", is_password=True, validator=non_empty_validator).strip()
-                payload = {"username": uname, "password": pword, "nonce": generate_nonce()}
-                send_secure_command_to_server(sock, server_address, "SECURE_SIGNUP", payload)
+                uname = session.prompt(
+                    "Enter username for signup: ",
+                    validator=username_validator,
+                ).strip()
+                pword = session.prompt(
+                    "Enter password for signup: ",
+                    is_password=True,
+                    validator=non_empty_validator,
+                ).strip()
+                payload = {
+                    "username": uname,
+                    "password": pword,
+                    "nonce": generate_nonce(),
+                }
+                send_secure_command_to_server(
+                    sock, server_address, "SECURE_SIGNUP", payload
+                )
+                console.print(
+                    f"<System> Signing up as {uname}...", style="system"
+                )
 
             elif action_cmd == "signin":
-                uname = session.prompt("Enter username for signin: ", validator=non_empty_validator).strip()
+                uname = session.prompt(
+                    "Enter username for signin: ",
+                    validator=username_validator,
+                ).strip()
                 if uname:
                     client_username = uname
                     auth_challenge_data = None
                     auth_successful_event.clear()
                     payload_step_a = {"username": uname}
                     send_secure_command_to_server(sock, server_address, "AUTH_REQUEST", payload_step_a)
-                    console.print(f"<System> Sign-in request sent for {uname}. Waiting for server challenge...", style="system")
+                    console.print(
+                        f"<System> Signing in as {uname}...", style="system"
+                    )
 
                     wait_start = time.time()
-                    while auth_challenge_data is None and (time.time() - wait_start < 10) and not stop_event.is_set():
-                        time.sleep(0.1)  # Wait for receive_messages to populate auth_challenge_data
+                    with console.status("[system]Waiting for server challenge..."):
+                        while (
+                            auth_challenge_data is None
+                            and (time.time() - wait_start < 10)
+                            and not stop_event.is_set()
+                        ):
+                            time.sleep(0.1)  # Wait for receive_messages to populate auth_challenge_data
 
                     if auth_challenge_data:
                         pword = session.prompt(
