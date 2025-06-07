@@ -309,6 +309,7 @@ def client_main_loop(sock, server_address):
                 custom_prompt,
                 completer=command_completer,
                 is_password=False,
+                validator=None,
             ).strip()
             if not action_input:
                 print_command_list()
@@ -324,6 +325,7 @@ def client_main_loop(sock, server_address):
                 pword = session.prompt(
                     "Enter password for signup: ",
                     is_password=True,
+                    validator=None,
                 ).strip()
                 if not uname or not pword:
                     console.print("<System> Username/password cannot be empty.", style="error")
@@ -344,6 +346,7 @@ def client_main_loop(sock, server_address):
                 pword = session.prompt(
                     "Enter password for signin: ",
                     is_password=True,
+                    validator=None,
                 ).strip()
                 if not uname or not pword:
                     console.print("<System> Username/password cannot be empty.", style="error")
