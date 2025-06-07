@@ -127,6 +127,7 @@ def print_command_list() -> None:
     )
     console.print(commands, style="system", markup=False)
     console.print("Type `help` at any time for details.", style="system")
+    console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +524,7 @@ def handle_signin(
 ) -> None:
     """Process the signin command using challenge-response."""
 
-    global client_username
+    global client_username, auth_challenge_data
 
     uname = prompt_text(
         "Enter username for signin: ", validator=get_username_validator()
