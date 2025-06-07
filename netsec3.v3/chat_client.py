@@ -106,7 +106,13 @@ auth_successful_event = threading.Event()
 
 def print_command_list():
     console.print(
-        "Available commands: signup, signin, message <target> <content>, broadcast <content>, greet, help, logs, exit",
+        "signup      Sign up with a new username and password\n"
+        "signin      Log in with your credentials\n"
+        "message     Send a private message: message <target> <content>\n"
+        f"broadcast   Send a message to all users: broadcast <content>\n"
+        "greet       Send a friendly greeting\n"
+        "logs        Show chat history\n"
+        "exit        Quit the application",
         style="system",
     )
     console.print("Type `help` at any time for details.", style="system")
@@ -326,7 +332,6 @@ def client_main_loop(sock, server_address):
                 validator=None,
             ).strip()
             if not action_input:
-                print_command_list()
                 continue
             action_parts = action_input.split(" ", 1)
             action_cmd = action_parts[0].lower()
@@ -364,7 +369,6 @@ def client_main_loop(sock, server_address):
                 ).strip()
                 if not uname or not pword:
                     console.print("<System> Username/password cannot be empty.", style="error")
-                    print_command_list()
                     continue
 
                 client_username = uname
@@ -411,7 +415,6 @@ def client_main_loop(sock, server_address):
                         console.print(f"<You> to {target_user}: {msg_content}", style="client")
                     else:
                         console.print("<System> Error: usage message <target> <content>. Type `help` for usage.", style="error")
-                print_command_list()
 
             elif action_cmd == "broadcast":
                 if not is_authenticated:
@@ -425,7 +428,6 @@ def client_main_loop(sock, server_address):
                         console.print(f"<You> broadcast: {msg_content}", style="client")
                     else:
                         console.print("<System> Error: usage broadcast <content>. Type `help` for usage.", style="error")
-                print_command_list()
 
             elif action_cmd == "greet":
                 if not is_authenticated:
@@ -433,7 +435,6 @@ def client_main_loop(sock, server_address):
                 else:
                     send_secure_command_to_server(sock, server_address, "GREET", {"nonce": generate_nonce()})
                     console.print("<You> greeting sent", style="client")
-                print_command_list()
 
             elif action_cmd == "help":
                 console.print(
@@ -446,7 +447,6 @@ def client_main_loop(sock, server_address):
                     "exit        Quit the application",
                     style="system",
                 )
-                print_command_list()
 
             elif action_cmd == "logs":
                 try:
@@ -454,7 +454,7 @@ def client_main_loop(sock, server_address):
                         console.pager(logf.read())
                 except FileNotFoundError:
                     console.print("<System> No log file found.", style="error")
-                print_command_list()
+                    print_command_list()
 
             elif action_cmd == "exit":
                 console.print("Exiting...", style="system")
