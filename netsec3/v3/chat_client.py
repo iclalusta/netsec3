@@ -26,13 +26,19 @@ theme = Theme({
 console = Console(theme=theme, markup=False, highlight=False)
 
 try:
-    import crypto_utils
+    from . import crypto_utils
 except ImportError:
-    console.print(
-        "Error: crypto_utils.py not found. Make sure it's in the same directory.",
-        style="error",
-    )
-    sys.exit(1)
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    try:
+        import crypto_utils
+    except ImportError:
+        console.print(
+            "Error: crypto_utils.py not found. Make sure it's in the same directory.",
+            style="error",
+        )
+        sys.exit(1)
 
 # Configure logging. Set level to WARNING by default.
 # Use DEBUG for troubleshooting. To see DEBUG logs, temporarily set

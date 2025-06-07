@@ -11,10 +11,16 @@ import re
 from collections import defaultdict
 
 try:
-    import crypto_utils
+    from . import crypto_utils
 except ImportError:
-    print("Error: crypto_utils.py not found.")
-    sys.exit(1)
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    try:
+        import crypto_utils
+    except ImportError:
+        print("Error: crypto_utils.py not found.")
+        sys.exit(1)
 
 # Configure logging: INFO level for server operations
 logging.basicConfig(
