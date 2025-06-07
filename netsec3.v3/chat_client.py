@@ -53,11 +53,14 @@ session = PromptSession()
 
 def prompt_username(message: str) -> str:
     """Prompt user for a username with format validation."""
-    return session.prompt(
+    uname = session.prompt(
         message,
         validator=username_validator,
         is_password=False,
     ).strip()
+    # Clear validator so it does not persist for subsequent prompts
+    session.default_buffer.validator = None
+    return uname
 
 command_completer = WordCompleter(
     ["signup", "signin", "message", "broadcast", "greet", "help", "logs", "exit"],
