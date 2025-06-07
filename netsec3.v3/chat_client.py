@@ -296,7 +296,11 @@ def client_main_loop(sock, server_address):
     print_command_list()
     while not stop_event.is_set():
         try:
-            action_input = session.prompt(custom_prompt, completer=command_completer).strip()
+            action_input = session.prompt(
+                custom_prompt,
+                completer=command_completer,
+                is_password=False,
+            ).strip()
             if not action_input:
                 print_command_list()
                 continue
@@ -310,6 +314,7 @@ def client_main_loop(sock, server_address):
                 uname = session.prompt(
                     "Enter username for signup: ",
                     validator=username_validator,
+                    is_password=False,
                 ).strip()
                 pword = session.prompt(
                     "Enter password for signup: ",
@@ -333,6 +338,7 @@ def client_main_loop(sock, server_address):
                 uname = session.prompt(
                     "Enter username for signin: ",
                     validator=username_validator,
+                    is_password=False,
                 ).strip()
                 pword = session.prompt(
                     "Enter password for signin: ",
