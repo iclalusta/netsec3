@@ -16,7 +16,10 @@ except ImportError:
     sys.exit(1)
 
 # Configure logging: INFO level for server operations
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - SERVER - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - SERVER - %(levelname)s - %(message)s",
+)
 
 CREDENTIALS_FILE = "user_credentials_ecdh_cr.json"
 MAX_REQUESTS_PER_WINDOW = 20
@@ -112,7 +115,7 @@ def send_encrypted_response(sock, client_address, channel_sk, response_payload_d
 
 
 def server(port):
-    global user_credentials_cr, client_sessions
+    """Run the UDP chat server on the given port."""
     load_cr_credentials()
 
     try:
