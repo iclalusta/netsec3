@@ -50,21 +50,44 @@ logging.basicConfig(
 custom_prompt = os.environ.get("CHAT_PROMPT", "] ")
 session = PromptSession()
 
+
+def prompt_username(message: str) -> str:
+    """Prompt user for a username with format validation."""
+    uname = session.prompt(
+        message,
+        validator=username_validator,
+        is_password=False,
+    ).strip()
+    # Clear validator so it does not persist for subsequent prompts
+    session.default_buffer.validator = None
+    return uname
+
 command_completer = WordCompleter(
     ["signup", "signin", "message", "broadcast", "greet", "help", "logs", "exit"],
     ignore_case=True,
 )
 
+USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+
+
+def is_non_empty(text: str) -> bool:
+    """Return True if the given text contains non-whitespace characters."""
+    return len(text.strip()) > 0
+
+
+def is_valid_username(text: str) -> bool:
+    """Check that the text matches the allowed username format."""
+    return bool(USERNAME_PATTERN.fullmatch(text.strip()))
+
+
 non_empty_validator = Validator.from_callable(
-    lambda t: len(t.strip()) > 0,
+    is_non_empty,
     error_message="Input required",
     move_cursor_to_end=True,
 )
 
-# Username must be 3-16 characters of letters, numbers or underscore
-username_re = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
 username_validator = Validator.from_callable(
-    lambda t: bool(username_re.match(t.strip())),
+    is_valid_username,
     error_message="Username must start with a letter and contain only letters, numbers or '_' (3-16 chars)",
     move_cursor_to_end=True,
 )
@@ -300,6 +323,7 @@ def client_main_loop(sock, server_address):
                 custom_prompt,
                 completer=command_completer,
                 is_password=False,
+                validator=None,
             ).strip()
             if not action_input:
                 print_command_list()
@@ -311,14 +335,11 @@ def client_main_loop(sock, server_address):
                 continue
 
             if action_cmd == "signup":
-                uname = session.prompt(
-                    "Enter username for signup: ",
-                    validator=username_validator,
-                    is_password=False,
-                ).strip()
+                uname = prompt_username("Enter username for signup: ")
                 pword = session.prompt(
                     "Enter password for signup: ",
                     is_password=True,
+                    validator=None,
                 ).strip()
                 if not uname or not pword:
                     console.print("<System> Username/password cannot be empty.", style="error")
@@ -335,14 +356,11 @@ def client_main_loop(sock, server_address):
                 print_command_list()
 
             elif action_cmd == "signin":
-                uname = session.prompt(
-                    "Enter username for signin: ",
-                    validator=username_validator,
-                    is_password=False,
-                ).strip()
+                uname = prompt_username("Enter username for signin: ")
                 pword = session.prompt(
                     "Enter password for signin: ",
                     is_password=True,
+                    validator=None,
                 ).strip()
                 if not uname or not pword:
                     console.print("<System> Username/password cannot be empty.", style="error")
