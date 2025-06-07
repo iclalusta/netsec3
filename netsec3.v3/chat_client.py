@@ -6,7 +6,6 @@ import time
 import getpass
 import uuid
 import logging
-import json
 import base64
 
 try:
@@ -122,18 +121,18 @@ def receive_messages(sock):
                         "key_length": payload.get("pbkdf2_key_length", crypto_utils.PBKDF2_KEY_LENGTH)
                     }
                     if not (auth_challenge_data["challenge"] and auth_challenge_data["salt"]):
-                        print("\n<Server> Received incomplete auth challenge.");
+                        print("\n<Server> Received incomplete auth challenge.")
                         auth_challenge_data = None
                     else:
                         logging.debug(f"Auth challenge received: {auth_challenge_data['challenge'][:10]}...")
-                        print(f"\n<Server> Authentication challenge received. Please provide password when prompted.")
+                        print("\n<Server> Authentication challenge received. Please provide password when prompted.")
 
                 elif msg_type == "AUTH_RESULT":
                     if payload.get("success"):
                         is_authenticated = True
                         print(f"\n<Server> Signin successful! Welcome {client_username}. {msg_detail}")
                     else:
-                        is_authenticated = False;
+                        is_authenticated = False
                         client_username = None
                         print(f"\n<Server> Signin failed: {msg_detail}")
                     auth_successful_event.set()
@@ -160,29 +159,36 @@ def receive_messages(sock):
 
             except ValueError as e:  # Decryption or JSON decode failed
                 logging.error(f"Failed to decrypt/decode server message: {e}. Msg snippet: {message_str[:50]}...")
-                print(f"\n<System> Error processing message from server. It might be corrupted or keys desynced.")
+                print("\n<System> Error processing message from server. It might be corrupted or keys desynced.")
             except Exception as e:
                 logging.error(f"Generic error processing encrypted server message: {e}", exc_info=True)
                 print(f"\n<System> Unexpected error processing server message: {e}")
 
-            if not stop_event.is_set(): print("] ", end='', flush=True)
+            if not stop_event.is_set():
+                print("] ", end='', flush=True)
 
         except socket.timeout:
             continue
         except UnicodeDecodeError as e:  # Should be rare now as server sends b64 or DH_RESPONSE
             logging.error(f"UnicodeDecodeError from server (unexpected format): {e}")
         except socket.error as e:
-            if not stop_event.is_set(): logging.error(f"Socket error in receive_messages: {e}")
+            if not stop_event.is_set():
+                logging.error(f"Socket error in receive_messages: {e}")
             break  # Exit thread on socket error
         except Exception as e:
-            if not stop_event.is_set(): logging.error(f"Unexpected error in receive_messages: {e}", exc_info=True)
+            if not stop_event.is_set():
+                logging.error(
+                    f"Unexpected error in receive_messages: {e}", exc_info=True
+                )
             break
     logging.info("Receive thread stopped.")  # INFO for thread lifecycle
 
 
 def send_secure_command_to_server(sock, server_address, command_type_header, payload_dict):
     global channel_sk
-    if not channel_sk: print("! Cannot send command: Secure channel not established."); return
+    if not channel_sk:
+        print("! Cannot send command: Secure channel not established.")
+        return
     try:
         plaintext_bytes = crypto_utils.serialize_payload(payload_dict)
         b64_encrypted_blob = crypto_utils.encrypt_aes_gcm(channel_sk, plaintext_bytes)
@@ -202,7 +208,7 @@ def client_main_loop(sock, server_address):
         logging.critical(
             "Terminating client due to ECDH key exchange failure.")  # CRITICAL for unrecoverable setup issues
         # print("! Secure channel (ECDH) could not be established. Exiting.") # perform_key_exchange already prints
-        stop_event.set();
+        stop_event.set()
         return
 
     print("\nAvailable commands: signup, signin, message <target> <content>, broadcast <content>, greet, exit")
@@ -212,7 +218,8 @@ def client_main_loop(sock, server_address):
             action_parts = action_input.lower().split(" ", 1)
             action_cmd = action_parts[0]
 
-            if not action_cmd: continue
+            if not action_cmd:
+                continue
 
             if action_cmd == "signup":
                 uname = input("Enter username for signup: ").strip()
@@ -226,8 +233,8 @@ def client_main_loop(sock, server_address):
             elif action_cmd == "signin":
                 uname = input("Enter username for signin: ").strip()
                 if uname:
-                    client_username = uname;
-                    auth_challenge_data = None;
+                    client_username = uname
+                    auth_challenge_data = None
                     auth_successful_event.clear()
                     payload_step_a = {"username": uname}
                     send_secure_command_to_server(sock, server_address, "AUTH_REQUEST", payload_step_a)
@@ -252,8 +259,11 @@ def client_main_loop(sock, server_address):
                                 send_secure_command_to_server(sock, server_address, "AUTH_RESPONSE", payload_step_c)
                                 print("<System> Challenge response sent. Waiting for final authentication result...")
                                 if not auth_successful_event.wait(timeout=10.0):
-                                    print("<System> Sign-in final response timeout from server.")
-                                    if not is_authenticated: client_username = None  # Reset if not successful
+                                    print(
+                                        "<System> Sign-in final response timeout from server."
+                                    )
+                                    if not is_authenticated:
+                                        client_username = None  # Reset if not successful
                             except Exception as e:
                                 print(f"<System> Error processing challenge or creating response: {e}")
                                 logging.error(f"Client-side challenge processing error: {e}", exc_info=True)
@@ -267,7 +277,8 @@ def client_main_loop(sock, server_address):
                     print("Username cannot be empty for signin.")
 
             elif action_cmd == "message":
-                if not is_authenticated: print("You must be signed in to send messages."); continue
+                if not is_authenticated:
+                    print("You must be signed in to send messages.")
                 parts = action_input.split(" ", 2)
                 if len(parts) > 2:
                     target_user, msg_content = parts[1], parts[2]
@@ -280,7 +291,8 @@ def client_main_loop(sock, server_address):
                     print("Usage: message <target_user> <content>")
 
             elif action_cmd == "broadcast":
-                if not is_authenticated: print("You must be signed in to broadcast messages."); continue
+                if not is_authenticated:
+                    print("You must be signed in to broadcast messages.")
                 parts = action_input.split(" ", 1)
                 if len(parts) > 1:
                     msg_content = parts[1]
@@ -293,19 +305,20 @@ def client_main_loop(sock, server_address):
                     print("Usage: broadcast <content>")
 
             elif action_cmd == "greet":
-                if not is_authenticated: print("You must be signed in to send GREETING."); continue
+                if not is_authenticated:
+                    print("You must be signed in to send GREETING.")
                 send_secure_command_to_server(sock, server_address, "GREET", {"nonce": generate_nonce()})
                 print("Sent GREET to server (securely).")
 
             elif action_cmd == "exit":
-                print("Exiting..."); stop_event.set(); break
+                print("Exiting...")
             else:
                 print(f"Unknown command: '{action_input}'. Type 'help' for commands (if implemented).")
 
         except EOFError:
-            stop_event.set(); print("\nExiting (EOF)...")  # User pressed Ctrl+D
+            stop_event.set()
         except KeyboardInterrupt:
-            stop_event.set(); print("\nExiting (Ctrl+C)...")  # User pressed Ctrl+C
+            stop_event.set()
         except Exception as e:
             logging.error(f"Error in client main loop: {e}", exc_info=True)
             print(f"<System> An unexpected error occurred: {e}")
@@ -315,14 +328,15 @@ def client_main_loop(sock, server_address):
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python chat_client_secure.py <server_ip> <server_port>");
+        print("Usage: python chat_client_secure.py <server_ip> <server_port>")
         sys.exit(1)
     server_ip_arg, server_port_arg_str = sys.argv[1], sys.argv[2]
     try:
         server_port_arg = int(server_port_arg_str)
-        if not 1024 < server_port_arg < 65536: raise ValueError("Port must be 1025-65535")
+        if not 1024 < server_port_arg < 65536:
+            raise ValueError("Port must be 1025-65535")
     except ValueError as e:
-        print(f"Invalid port: {e}"); sys.exit(1)
+        print(f"Invalid port: {e}")
 
     server_addr_tuple = (server_ip_arg, server_port_arg)
     client_sock = None
@@ -343,7 +357,8 @@ if __name__ == "__main__":
         logging.info("Client shutting down...")  # INFO for shutdown sequence
         print("<System> Shutting down client...")
         stop_event.set()
-        if client_sock: client_sock.close()
+        if client_sock:
+            client_sock.close()
         if receiver_thread and receiver_thread.is_alive():
             logging.debug("Waiting for receiver thread to join...")
             receiver_thread.join(timeout=1.0)  # Shorter timeout for cleanup

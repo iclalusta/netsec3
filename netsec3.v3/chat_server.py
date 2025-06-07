@@ -12,7 +12,7 @@ from collections import defaultdict
 try:
     import crypto_utils
 except ImportError:
-    print("Error: crypto_utils.py not found.");
+    print("Error: crypto_utils.py not found.")
     sys.exit(1)
 
 # Configure logging: INFO level for server operations
@@ -38,9 +38,10 @@ def load_cr_credentials():
                 user_credentials_cr = json.load(f)
             logging.info(f"Loaded {len(user_credentials_cr)} user(s) from {CREDENTIALS_FILE}")
         except Exception as e:
-            logging.error(f"Load CR creds fail: {e}. Starting empty."); user_credentials_cr = {}
+            logging.error(f"Load CR creds fail: {e}. Starting empty.")
     else:
-        logging.info(f"{CREDENTIALS_FILE} not found. Starting empty."); user_credentials_cr = {}
+        logging.info(f"{CREDENTIALS_FILE} not found. Starting empty.")
+        user_credentials_cr = {}
 
 
 def save_cr_credentials():
@@ -57,9 +58,9 @@ def is_rate_limited(ip_address):
     request_tracker[ip_address] = [ts for ts in request_tracker[ip_address] if
                                    current_time - ts < REQUEST_WINDOW_SECONDS]
     if len(request_tracker[ip_address]) >= MAX_REQUESTS_PER_WINDOW:
-        logging.warning(f"Rate limit exceeded for IP: {ip_address}");
+        logging.warning(f"Rate limit exceeded for IP: {ip_address}")
         return True
-    request_tracker[ip_address].append(current_time);
+    request_tracker[ip_address].append(current_time)
     return False
 
 
@@ -69,7 +70,7 @@ def validate_internal_nonce(nonce_value):
     used_internal_nonces = {n: ts for n, ts in used_internal_nonces.items() if
                             current_time - ts < INTERNAL_NONCE_EXPIRY_SECONDS}
     if nonce_value in used_internal_nonces:
-        logging.warning(f"Internal nonce reuse attempt: '{nonce_value}'");
+        logging.warning(f"Internal nonce reuse attempt: '{nonce_value}'")
         return False  # More specific log
     used_internal_nonces[nonce_value] = current_time
     logging.debug(f"Internal nonce validated: {nonce_value}")
@@ -78,22 +79,28 @@ def validate_internal_nonce(nonce_value):
 
 def validate_timestamp_internal(timestamp_str):
     try:
-        if abs(time.time() - float(timestamp_str)) <= TIMESTAMP_WINDOW_SECONDS: return True
+        if abs(time.time() - float(timestamp_str)) <= TIMESTAMP_WINDOW_SECONDS:
+            return True
         logging.warning(
-            f"Invalid internal timestamp: {timestamp_str}. Diff: {abs(time.time() - float(timestamp_str))}");
+            f"Invalid internal timestamp: {timestamp_str}. Diff: {abs(time.time() - float(timestamp_str))}")
         return False
     except ValueError:
-        logging.warning(f"Malformed internal timestamp: {timestamp_str}"); return False
+        logging.warning(f"Malformed internal timestamp: {timestamp_str}")
 
 
 def validate_username_password_format(username, password):
-    if not (3 <= len(username) <= 30 and username.isalnum()): return False, "Username must be 3-30 alphanumeric chars."
-    if not (6 <= len(password) <= 128): return False, "Password must be 6-128 chars."
+    if not (3 <= len(username) <= 30 and username.isalnum()):
+        return False, "Username must be 3-30 alphanumeric chars."
+    if not (6 <= len(password) <= 128):
+        return False, "Password must be 6-128 chars."
     return True, ""
 
 
 def send_encrypted_response(sock, client_address, channel_sk, response_payload_dict):
-    if not channel_sk: logging.error(f"No ChannelSK for {client_address}. Cannot send encrypted response."); return
+    if not channel_sk:
+        logging.error(
+            f"No ChannelSK for {client_address}. Cannot send encrypted response."
+        )
     try:
         plaintext_bytes = crypto_utils.serialize_payload(response_payload_dict)
         b64_encrypted_blob = crypto_utils.encrypt_aes_gcm(channel_sk, plaintext_bytes)
@@ -113,7 +120,7 @@ def server(port):
         sock.bind(('', port))
         logging.info(f"Secure ECDH+CR server started on port {port}...")
     except Exception as e:
-        logging.critical(f"Server startup error: {e}", exc_info=True); sys.exit(1)
+        logging.critical(f"Server startup error: {e}", exc_info=True)
 
     while True:
         try:
@@ -122,7 +129,8 @@ def server(port):
             client_ip = client_addr[0]
             logging.debug(f"Raw from {client_addr}: '{message_str[:100]}...'")  # DEBUG for raw messages
 
-            if is_rate_limited(client_ip): continue  # Rate limit log is already a WARNING
+            if is_rate_limited(client_ip):
+                continue  # Rate limit log is already a WARNING
 
             parts = message_str.split(':', 1)
             command_header = parts[0]
@@ -151,7 +159,7 @@ def server(port):
             session = client_sessions.get(client_addr)
             if not session or not session.get("channel_sk"):
                 logging.warning(
-                    f"Command '{command_header}' from {client_addr} without established ChannelSK. Ignoring.");
+                    f"Command '{command_header}' from {client_addr} without established ChannelSK. Ignoring.")
                 continue
 
             current_channel_sk = session["channel_sk"]
@@ -172,7 +180,7 @@ def server(port):
             response_payload = {}
 
             if command_header == "SECURE_SIGNUP":
-                username = req_payload.get("username");
+                username = req_payload.get("username")
                 password = req_payload.get("password")
                 logging.info(f"Processing SECURE_SIGNUP for username '{username}' from {client_addr}")
                 response_payload["type"] = "AUTH_RESPONSE"
@@ -216,9 +224,9 @@ def server(port):
                                             {"type": "AUTH_RESULT", "success": False, "detail": "Username not found."})
 
             elif command_header == "AUTH_RESPONSE":
-                client_proof_b64 = req_payload.get("challenge_response");
+                client_proof_b64 = req_payload.get("challenge_response")
                 client_req_nonce = req_payload.get("client_nonce")
-                username = session.get("pending_auth_username");
+                username = session.get("pending_auth_username")
                 server_challenge = session.get("pending_challenge")
                 user_data = user_credentials_cr.get(username) if username else None
                 logging.info(f"Processing AUTH_RESPONSE for '{username}' from {client_addr}")
@@ -236,7 +244,7 @@ def server(port):
                         verifier_b = bytes.fromhex(user_data["verifier"])
                         expected_proof_b = crypto_utils.compute_hmac_sha256(verifier_b, server_challenge)
                         if hmac.compare_digest(expected_proof_b, client_proof_b):
-                            session["username"] = username;
+                            session["username"] = username
                             session["authenticated_at"] = time.time()
                             auth_res_payload.update({"success": True, "detail": f"Welcome back, {username}!"})
                             logging.info(f"Authentication SUCCESS for '{username}'@{client_addr}")
@@ -247,7 +255,7 @@ def server(port):
                         auth_res_payload["detail"] = "Error verifying proof. Please try again."
                         logging.error(f"Error verifying proof for {username} from {client_addr}: {e}", exc_info=True)
 
-                session["pending_challenge"] = None;
+                session["pending_challenge"] = None
                 session["pending_auth_username"] = None
                 send_encrypted_response(sock, client_addr, current_channel_sk, auth_res_payload)
 
@@ -275,8 +283,8 @@ def server(port):
                 else:
                     target_addr, target_sk = None, None
                     for addr, s_data in client_sessions.items():  # Find recipient
-                        if s_data.get("username") == to_user: target_addr, target_sk = addr, s_data.get(
-                            "channel_sk"); break
+                        if s_data.get("username") == to_user:
+                            target_addr, target_sk = addr, s_data.get("channel_sk")
                     if target_addr and target_sk:
                         send_encrypted_response(sock, target_addr, target_sk,
                                                 {"type": "SECURE_MESSAGE_INCOMING", "from_user": sender,
@@ -337,10 +345,13 @@ def server(port):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2: print("Usage: python chat_server_secure.py <port>"); sys.exit(1)
+    if len(sys.argv) != 2:
+        print("Usage: python chat_server_secure.py <port>")
+        sys.exit(1)
     try:
         server_port = int(sys.argv[1])
-        if not 1024 < server_port < 65536: raise ValueError("Port must be 1025-65535")
+        if not 1024 < server_port < 65536:
+            raise ValueError("Port must be 1025-65535")
         server(server_port)
     except ValueError as e:
         print(f"Invalid port: {e}")
