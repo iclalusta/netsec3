@@ -1,13 +1,18 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "netsec3.v3")))
 import unittest
 import subprocess
 import socket
 import time
 import uuid
 import base64
-import crypto_utils
+try:
+    from . import crypto_utils
+except ImportError:
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    import crypto_utils
 
 
 SERVER_PORT = 15000
