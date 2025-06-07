@@ -96,12 +96,13 @@ username_re = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
 
 
 def validate_username_password_format(username, password):
-    if not username_re.match(username):
+    """Validate signup username and password formats."""
+    if not isinstance(username, str) or not username_re.match(username):
         return (
             False,
             "Username must start with a letter and contain only letters, numbers or '_' (3-16 chars)",
         )
-    if not (6 <= len(password) <= 128):
+    if not isinstance(password, str) or not (6 <= len(password) <= 128):
         return False, "Password must be 6-128 chars."
     return True, ""
 
