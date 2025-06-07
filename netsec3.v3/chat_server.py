@@ -7,6 +7,7 @@ import os
 import time
 import base64
 import hmac
+import re
 from collections import defaultdict
 
 try:
@@ -91,9 +92,15 @@ def validate_timestamp_internal(timestamp_str):
         logging.warning(f"Malformed internal timestamp: {timestamp_str}")
 
 
+username_re = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+
+
 def validate_username_password_format(username, password):
-    if not (3 <= len(username) <= 30 and username.isalnum()):
-        return False, "Username must be 3-30 alphanumeric chars."
+    if not username_re.match(username):
+        return (
+            False,
+            "Username must start with a letter and contain only letters, numbers or '_' (3-16 chars)",
+        )
     if not (6 <= len(password) <= 128):
         return False, "Password must be 6-128 chars."
     return True, ""
