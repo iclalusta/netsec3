@@ -50,6 +50,15 @@ logging.basicConfig(
 custom_prompt = os.environ.get("CHAT_PROMPT", "] ")
 session = PromptSession()
 
+
+def prompt_username(message: str) -> str:
+    """Prompt user for a username with format validation."""
+    return session.prompt(
+        message,
+        validator=username_validator,
+        is_password=False,
+    ).strip()
+
 command_completer = WordCompleter(
     ["signup", "signin", "message", "broadcast", "greet", "help", "logs", "exit"],
     ignore_case=True,
@@ -311,11 +320,7 @@ def client_main_loop(sock, server_address):
                 continue
 
             if action_cmd == "signup":
-                uname = session.prompt(
-                    "Enter username for signup: ",
-                    validator=username_validator,
-                    is_password=False,
-                ).strip()
+                uname = prompt_username("Enter username for signup: ")
                 pword = session.prompt(
                     "Enter password for signup: ",
                     is_password=True,
@@ -335,11 +340,7 @@ def client_main_loop(sock, server_address):
                 print_command_list()
 
             elif action_cmd == "signin":
-                uname = session.prompt(
-                    "Enter username for signin: ",
-                    validator=username_validator,
-                    is_password=False,
-                ).strip()
+                uname = prompt_username("Enter username for signin: ")
                 pword = session.prompt(
                     "Enter password for signin: ",
                     is_password=True,
