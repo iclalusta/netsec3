@@ -24,8 +24,6 @@ from rich.progress import Progress
 try:
     from . import crypto_utils
 except ImportError:
-    import os
-    import sys
     sys.path.insert(0, os.path.dirname(__file__))
     import crypto_utils
 
@@ -308,7 +306,10 @@ def handle_encrypted_payload(payload: dict) -> None:
                 "pbkdf2_key_length", crypto_utils.PBKDF2_KEY_LENGTH
             ),
         }
-        if not (auth_challenge_data["challenge"] and auth_challenge_data["salt"]):
+        if not (
+            auth_challenge_data["challenge"]
+            and auth_challenge_data["salt"]
+        ):
             console.print(
                 "\n<Server> Received incomplete auth challenge.",
                 style="error",
@@ -388,7 +389,7 @@ def handle_encrypted_payload(payload: dict) -> None:
 def receive_messages(sock: socket.socket) -> None:
     """Continuously receive and process messages from the server."""
 
-    global channel_sk, client_ecdh_private_key
+    global channel_sk
 
     while not stop_event.is_set():
         try:
@@ -401,18 +402,19 @@ def receive_messages(sock: socket.socket) -> None:
                 if client_ecdh_private_key:
                     try:
                         server_pub_key_b64 = message_str.split(":", 1)[1]
-                        server_pub_key = crypto_utils.deserialize_ecdh_public_key(
-                            server_pub_key_b64
+                        server_pub_key = (
+                            crypto_utils.deserialize_ecdh_public_key(
+                                server_pub_key_b64
+                            )
                         )
-                        channel_sk_local = crypto_utils.derive_shared_key_ecdh(
+                        channel_sk = crypto_utils.derive_shared_key_ecdh(
                             client_ecdh_private_key,
                             server_pub_key,
                         )
-                        globals()["channel_sk"] = channel_sk_local
                         key_exchange_complete.set()
                         logging.debug(
                             "Derived ChannelSK via ECDH: %s...",
-                            channel_sk_local.hex()[:16],
+                            channel_sk.hex()[:16],
                         )
                     except Exception as exc:
                         logging.error(
@@ -440,9 +442,15 @@ def receive_messages(sock: socket.socket) -> None:
                 continue
 
             try:
-                decrypted = crypto_utils.decrypt_aes_gcm(channel_sk, message_str)
+                decrypted = crypto_utils.decrypt_aes_gcm(
+                    channel_sk,
+                    message_str,
+                )
                 payload = crypto_utils.deserialize_payload(decrypted)
-                logging.debug("Decrypted payload from server: %s", payload)
+                logging.debug(
+                    "Decrypted payload from server: %s",
+                    payload,
+                )
                 handle_encrypted_payload(payload)
             except ValueError as exc:
                 logging.error(
@@ -462,9 +470,6 @@ def receive_messages(sock: socket.socket) -> None:
                     f"\n<System> Unexpected error processing message: {exc}",
                     style="error",
                 )
-
-            if not stop_event.is_set():
-                console.print(config.prompt, end="", style="system")
 
         except socket.timeout:
             continue
@@ -487,7 +492,9 @@ def receive_messages(sock: socket.socket) -> None:
 # Command handlers
 # ---------------------------------------------------------------------------
 
-def handle_signup(sock: socket.socket, server_address: tuple[str, int]) -> None:
+def handle_signup(
+    sock: socket.socket, server_address: tuple[str, int]
+) -> None:
     """Process the signup command."""
 
     uname = prompt_text(
@@ -511,7 +518,9 @@ def handle_signup(sock: socket.socket, server_address: tuple[str, int]) -> None:
     print_command_list()
 
 
-def handle_signin(sock: socket.socket, server_address: tuple[str, int]) -> None:
+def handle_signin(
+    sock: socket.socket, server_address: tuple[str, int]
+) -> None:
     """Process the signin command using challenge-response."""
 
     global client_username
@@ -532,19 +541,31 @@ def handle_signin(sock: socket.socket, server_address: tuple[str, int]) -> None:
         return
 
     client_username = uname
-    globals()["auth_challenge_data"] = None
+    auth_challenge_data = None
     auth_successful_event.clear()
-    send_secure_command(sock, server_address, "AUTH_REQUEST", {"username": uname})
+    send_secure_command(
+        sock,
+        server_address,
+        "AUTH_REQUEST",
+        {"username": uname},
+    )
     console.print(f"<System> Signing in as {uname}...", style="system")
 
     wait_start = time.time()
-    while auth_challenge_data is None and time.time() - wait_start < config.auth_timeout and not stop_event.is_set():
+    while (
+        auth_challenge_data is None
+        and time.time() - wait_start < config.auth_timeout
+        and not stop_event.is_set()
+    ):
         time.sleep(0.1)
 
     if auth_challenge_data:
         try:
             salt_bytes = bytes.fromhex(auth_challenge_data["salt"])
-            derived_key = crypto_utils.derive_password_verifier(pword, salt_bytes)
+            derived_key = crypto_utils.derive_password_verifier(
+                pword,
+                salt_bytes,
+            )
             proof_bytes = crypto_utils.compute_hmac_sha256(
                 derived_key, auth_challenge_data["challenge"]
             )
@@ -553,7 +574,10 @@ def handle_signin(sock: socket.socket, server_address: tuple[str, int]) -> None:
                 sock,
                 server_address,
                 "AUTH_RESPONSE",
-                {"challenge_response": proof_b64, "client_nonce": generate_nonce()},
+                {
+                    "challenge_response": proof_b64,
+                    "client_nonce": generate_nonce(),
+                },
             )
             wait_start = time.time()
             while (
@@ -608,7 +632,8 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
         console.print(f"<You> to {target_user}: {msg_content}", style="client")
     else:
         console.print(
-            "<System> Error: usage message <target> <content>. Type `help` for usage.",
+            "<System> Error: usage message <target> <content>. "
+            "Type `help` for usage.",
             style="error",
         )
 
@@ -632,7 +657,8 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
         console.print(f"<You> broadcast: {msg_content}", style="client")
     else:
         console.print(
-            "<System> Error: usage broadcast <content>. Type `help` for usage.",
+            "<System> Error: usage broadcast <content>. "
+            "Type `help` for usage.",
             style="error",
         )
 
