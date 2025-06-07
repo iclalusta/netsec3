@@ -21,6 +21,7 @@ theme = Theme({
     "system": "cyan",
     "server": "green",
     "error": "bold red",
+    "client": "yellow",
 })
 console = Console(theme=theme)
 
@@ -78,6 +79,14 @@ key_exchange_complete = threading.Event()
 
 auth_challenge_data = None
 auth_successful_event = threading.Event()
+
+
+def print_command_list():
+    console.print(
+        "Available commands: signup, signin, message <target> <content>, broadcast <content>, greet, help, logs, exit",
+        style="system",
+    )
+    console.print("Type `help` at any time for details.", style="system")
 
 
 def generate_nonce():
@@ -177,11 +186,11 @@ def receive_messages(sock):
 
                 if msg_type == "AUTH_RESPONSE":  # For SECURE_SIGNUP
                     if msg_status == "SIGNUP_OK":
-                        console.print(f"\n<Server> Signup successful! {msg_detail}", style="server")
+                        console.print("<Server> Signup successful! You can now signin.", style="server")
                     elif msg_status == "SIGNUP_FAIL":
-                        console.print(f"\n<Server> Signup failed: {msg_detail}", style="error")
+                        console.print(f"<Server> Signup failed: {msg_detail}", style="error")
                     else:
-                        console.print(f"\n<Server Unexpected Auth Response> {msg_status}: {msg_detail}", style="error")
+                        console.print(f"<Server> Unexpected signup response: {msg_status}: {msg_detail}", style="error")
 
                 elif msg_type == "AUTH_CHALLENGE":
                     auth_challenge_data = {
@@ -199,36 +208,36 @@ def receive_messages(sock):
                 elif msg_type == "AUTH_RESULT":
                     if payload.get("success"):
                         is_authenticated = True
-                        console.print(f"\n<Server> Signin successful! Welcome {client_username}. {msg_detail}", style="server")
+                        console.print(f"<Server> Welcome, {client_username}!", style="server")
                     else:
                         is_authenticated = False
                         client_username = None
-                        console.print(f"\n<Server> Signin failed: {msg_detail}", style="error")
+                        console.print(f"<Server> Signin failed: {msg_detail}", style="error")
                     auth_successful_event.set()
 
                 elif msg_type == "GREETING_RESPONSE":
                     if payload.get("status") == "GREETING_OK":
-                        console.print(f"\n<Server> Greeting acknowledged! {msg_detail}", style="server")
+                        console.print(f"<Server> Greeting acknowledged! {msg_detail}", style="server")
                     else:
-                        console.print(f"\n<Server> Greeting response: {payload.get('status')} - {msg_detail}", style="server")
+                        console.print(f"<Server> Greeting response: {payload.get('status')} - {msg_detail}", style="server")
 
                 elif msg_type == "SECURE_MESSAGE_INCOMING":
                     console.print(
-                        f"\n<Secure Msg from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
+                        f"<Secure Msg from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
                         style="server",
                     )
                 elif msg_type == "BROADCAST_INCOMING":
                     console.print(
-                        f"\n<Secure Bcast from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
+                        f"<Secure Bcast from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
                         style="server",
                     )
                 elif msg_type == "MESSAGE_STATUS":
-                    console.print(f"\n<Server Msg Status> {payload.get('status')}: {msg_detail}", style="server")
+                    console.print(f"<Server> {payload.get('status')}: {msg_detail}", style="server")
                 elif msg_type == "SERVER_ERROR":
-                    console.print(f"\n<Server Secure Error> {msg_detail}", style="error")
+                    console.print(f"<Server> Error: {msg_detail}", style="error")
                 else:
                     logging.warning(f"Received unknown encrypted message type from server: {msg_type}")
-                    console.print(f"\n<Server Encrypted - Unknown Type> Type: {msg_type}, Detail: {msg_detail}", style="error")
+                    console.print(f"<Server> Unknown type {msg_type}: {msg_detail}", style="error")
 
             except ValueError as e:  # Decryption or JSON decode failed
                 logging.error(f"Failed to decrypt/decode server message: {e}. Msg snippet: {message_str[:50]}...")
@@ -284,16 +293,15 @@ def client_main_loop(sock, server_address):
         stop_event.set()
         return
 
-    console.print(
-        "\nAvailable commands: signup, signin, message <target> <content>, broadcast <content>, greet, help, logs, exit",
-        style="system",
-    )
-    console.print("Type 'help' at any time for a command list.", style="system")
+    print_command_list()
     while not stop_event.is_set():
         try:
             action_input = session.prompt(custom_prompt, completer=command_completer).strip()
-            action_parts = action_input.lower().split(" ", 1)
-            action_cmd = action_parts[0]
+            if not action_input:
+                print_command_list()
+                continue
+            action_parts = action_input.split(" ", 1)
+            action_cmd = action_parts[0].lower()
 
             if not action_cmd:
                 continue
@@ -306,131 +314,129 @@ def client_main_loop(sock, server_address):
                 pword = session.prompt(
                     "Enter password for signup: ",
                     is_password=True,
-                    validator=non_empty_validator,
                 ).strip()
-                payload = {
-                    "username": uname,
-                    "password": pword,
-                    "nonce": generate_nonce(),
-                }
-                send_secure_command_to_server(
-                    sock, server_address, "SECURE_SIGNUP", payload
-                )
-                console.print(
-                    f"<System> Signing up as {uname}...", style="system"
-                )
+                if not uname or not pword:
+                    console.print("<System> Username/password cannot be empty.", style="error")
+                else:
+                    payload = {
+                        "username": uname,
+                        "password": pword,
+                        "nonce": generate_nonce(),
+                    }
+                    send_secure_command_to_server(
+                        sock, server_address, "SECURE_SIGNUP", payload
+                    )
+                    console.print(f"<System> Signing up as {uname}...", style="system")
+                print_command_list()
 
             elif action_cmd == "signin":
                 uname = session.prompt(
                     "Enter username for signin: ",
                     validator=username_validator,
                 ).strip()
-                if uname:
-                    client_username = uname
-                    auth_challenge_data = None
-                    auth_successful_event.clear()
-                    payload_step_a = {"username": uname}
-                    send_secure_command_to_server(sock, server_address, "AUTH_REQUEST", payload_step_a)
-                    console.print(
-                        f"<System> Signing in as {uname}...", style="system"
-                    )
+                pword = session.prompt(
+                    "Enter password for signin: ",
+                    is_password=True,
+                ).strip()
+                if not uname or not pword:
+                    console.print("<System> Username/password cannot be empty.", style="error")
+                    print_command_list()
+                    continue
 
-                    wait_start = time.time()
-                    with console.status("[system]Waiting for server challenge..."):
-                        while (
-                            auth_challenge_data is None
-                            and (time.time() - wait_start < 10)
-                            and not stop_event.is_set()
-                        ):
-                            time.sleep(0.1)  # Wait for receive_messages to populate auth_challenge_data
+                client_username = uname
+                auth_challenge_data = None
+                auth_successful_event.clear()
+                send_secure_command_to_server(sock, server_address, "AUTH_REQUEST", {"username": uname})
+                console.print(f"<System> Signing in as {uname}...", style="system")
 
-                    if auth_challenge_data:
-                        pword = session.prompt(
-                            f"Enter password for {uname} (to respond to server challenge): ",
-                            is_password=True,
-                            validator=non_empty_validator,
-                        ).strip()
-                        if pword:
-                            try:
-                                salt_bytes = bytes.fromhex(auth_challenge_data["salt"])
-                                derived_key = crypto_utils.derive_password_verifier(pword, salt_bytes)
-                                client_proof_bytes = crypto_utils.compute_hmac_sha256(derived_key,
-                                                                                      auth_challenge_data["challenge"])
-                                client_proof_b64 = base64.b64encode(client_proof_bytes).decode('utf-8')
-                                payload_step_c = {"challenge_response": client_proof_b64,
-                                                  "client_nonce": generate_nonce()}
-                                send_secure_command_to_server(sock, server_address, "AUTH_RESPONSE", payload_step_c)
-                                console.print("<System> Challenge response sent. Waiting for final authentication result...", style="system")
-                                with Progress(transient=True) as progress:
-                                    task = progress.add_task("[system]Awaiting auth result...", total=10)
-                                    start = time.time()
-                                    while not auth_successful_event.is_set() and time.time() - start < 10:
-                                        progress.advance(task)
-                                        time.sleep(1)
-                                if not auth_successful_event.is_set():
-                                    console.print("<System> Sign-in final response timeout from server.", style="error")
-                                    if not is_authenticated:
-                                        client_username = None  # Reset if not successful
-                            except Exception as e:
-                                console.print(f"<System> Error processing challenge or creating response: {e}", style="error")
-                                logging.error(f"Client-side challenge processing error: {e}", exc_info=True)
-                                client_username = None
-                        else:
-                            console.print("Password cannot be empty for challenge response.", style="error")
-                    elif not stop_event.is_set():  # Only print if not exiting
-                        console.print(f"<System> Did not receive challenge from server for {uname} or timed out.", style="error")
+                wait_start = time.time()
+                while auth_challenge_data is None and time.time() - wait_start < 5 and not stop_event.is_set():
+                    time.sleep(0.1)
+
+                if auth_challenge_data:
+                    try:
+                        salt_bytes = bytes.fromhex(auth_challenge_data["salt"])
+                        derived_key = crypto_utils.derive_password_verifier(pword, salt_bytes)
+                        client_proof_bytes = crypto_utils.compute_hmac_sha256(derived_key, auth_challenge_data["challenge"])
+                        proof_b64 = base64.b64encode(client_proof_bytes).decode("utf-8")
+                        send_secure_command_to_server(sock, server_address, "AUTH_RESPONSE", {"challenge_response": proof_b64, "client_nonce": generate_nonce()})
+                        wait_start = time.time()
+                        while not auth_successful_event.is_set() and time.time() - wait_start < 5 and not stop_event.is_set():
+                            time.sleep(0.1)
+                        if not auth_successful_event.is_set():
+                            console.print("<Server> Signin failed: no response from server", style="error")
+                            client_username = None
+                    except Exception as e:
+                        console.print(f"<System> Error: {e}", style="error")
+                        logging.error(f"Client-side challenge processing error: {e}", exc_info=True)
                         client_username = None
                 else:
-                    console.print("Username cannot be empty for signin.", style="error")
+                    console.print("<Server> Signin failed: challenge timeout", style="error")
+                    client_username = None
+                print_command_list()
 
             elif action_cmd == "message":
                 if not is_authenticated:
-                    console.print("You must be signed in to send messages.", style="error")
-                parts = action_input.split(" ", 2)
-                if len(parts) > 2:
-                    target_user, msg_content = parts[1], parts[2]
-                    if msg_content:
+                    console.print("<System> Error: not signed in. Type `help` for usage.", style="error")
+                else:
+                    parts = action_input.split(" ", 2)
+                    if len(parts) > 2 and parts[2].strip():
+                        target_user, msg_content = parts[1], parts[2]
                         payload = {"to_user": target_user, "content": msg_content, "timestamp": str(time.time())}
                         send_secure_command_to_server(sock, server_address, "SECURE_MESSAGE", payload)
+                        console.print(f"<You> to {target_user}: {msg_content}", style="client")
                     else:
-                        console.print("Cannot send an empty message.", style="error")
-                else:
-                    console.print("Usage: message <target_user> <content>", style="system")
+                        console.print("<System> Error: usage message <target> <content>. Type `help` for usage.", style="error")
+                print_command_list()
 
             elif action_cmd == "broadcast":
                 if not is_authenticated:
-                    console.print("You must be signed in to broadcast messages.", style="error")
-                parts = action_input.split(" ", 1)
-                if len(parts) > 1:
-                    msg_content = parts[1]
-                    if msg_content:
+                    console.print("<System> Error: not signed in. Type `help` for usage.", style="error")
+                else:
+                    parts = action_input.split(" ", 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        msg_content = parts[1]
                         payload = {"content": msg_content, "timestamp": str(time.time())}
                         send_secure_command_to_server(sock, server_address, "BROADCAST", payload)
+                        console.print(f"<You> broadcast: {msg_content}", style="client")
                     else:
-                        console.print("Cannot send an empty broadcast message.", style="error")
-                else:
-                    console.print("Usage: broadcast <content>", style="system")
+                        console.print("<System> Error: usage broadcast <content>. Type `help` for usage.", style="error")
+                print_command_list()
 
             elif action_cmd == "greet":
                 if not is_authenticated:
-                    console.print("You must be signed in to send GREETING.", style="error")
-                send_secure_command_to_server(sock, server_address, "GREET", {"nonce": generate_nonce()})
-                console.print("Sent GREET to server (securely).", style="system")
+                    console.print("<System> Error: not signed in. Type `help` for usage.", style="error")
+                else:
+                    send_secure_command_to_server(sock, server_address, "GREET", {"nonce": generate_nonce()})
+                    console.print("<You> greeting sent", style="client")
+                print_command_list()
 
             elif action_cmd == "help":
-                console.print("Available commands: signup, signin, message, broadcast, greet, help, logs, exit", style="system")
+                console.print(
+                    "signup      Sign up with a new username and password\n"
+                    "signin      Log in with your credentials\n"
+                    "message     Send a private message: message <target> <content>\n"
+                    "broadcast   Send a message to all users: broadcast <content>\n"
+                    "greet       Send a friendly greeting\n"
+                    "logs        Show chat history\n"
+                    "exit        Quit the application",
+                    style="system",
+                )
+                print_command_list()
 
             elif action_cmd == "logs":
                 try:
                     with open('client.log', 'r') as logf:
                         console.pager(logf.read())
                 except FileNotFoundError:
-                    console.print("No log file found.", style="error")
+                    console.print("<System> No log file found.", style="error")
+                print_command_list()
 
             elif action_cmd == "exit":
                 console.print("Exiting...", style="system")
             else:
-                console.print(f"Unknown command: '{action_input}'. Type 'help' for commands.", style="error")
+                console.print(f"<System> Error: unknown command '{action_input}'. Type `help` for usage.", style="error")
+                print_command_list()
 
         except EOFError:
             stop_event.set()
