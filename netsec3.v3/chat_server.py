@@ -27,6 +27,7 @@ MAX_REQUESTS_PER_WINDOW = 20
 REQUEST_WINDOW_SECONDS = 60
 INTERNAL_NONCE_EXPIRY_SECONDS = 300
 TIMESTAMP_WINDOW_SECONDS = 60
+MAX_MSG_LENGTH = 512
 
 user_credentials_cr = {}
 client_sessions = {}
@@ -45,6 +46,16 @@ def validate_username_format(username):
 def validate_password_format(password):
     """Return True if the password meets length requirements."""
     return isinstance(password, str) and 6 <= len(password) <= 128
+
+
+def validate_message_content(content):
+    """Return True if message content length is within allowed bounds."""
+    return isinstance(content, str) and 0 < len(content) <= MAX_MSG_LENGTH
+
+
+def validate_broadcast_content(content):
+    """Return True if broadcast content length is within allowed bounds."""
+    return isinstance(content, str) and 0 < len(content) <= MAX_MSG_LENGTH
 
 
 def load_cr_credentials():
@@ -103,6 +114,7 @@ def validate_timestamp_internal(timestamp_str):
         return False
     except ValueError:
         logging.warning(f"Malformed internal timestamp: {timestamp_str}")
+        return False
 
 
 def validate_username_password_format(username, password):
@@ -293,12 +305,13 @@ def server(port):
                                          "detail": f"Hello {session['username']}! Greeting received."})
 
             elif command_header == "SECURE_MESSAGE":
-                to_user, content, ts = req_payload.get("to_user"), req_payload.get("content"), req_payload.get(
-                    "timestamp")
+                to_user = req_payload.get("to_user")
+                content = req_payload.get("content")
+                ts = req_payload.get("timestamp")
                 sender = session["username"]
                 logging.info(f"Processing SECURE_MESSAGE from '{sender}' to '{to_user}' via {client_addr}")
                 status_payload = {"type": "MESSAGE_STATUS"}
-                if not (to_user and content and validate_timestamp_internal(ts)):
+                if not (validate_username_format(to_user) and validate_message_content(content) and validate_timestamp_internal(ts)):
                     status_payload.update({"status": "MESSAGE_FAIL", "detail": "Invalid message format or timestamp."})
                     logging.warning(f"Invalid SECURE_MESSAGE format from '{sender}': to={to_user}, ts={ts}")
                 else:
@@ -320,11 +333,12 @@ def server(port):
                 send_encrypted_response(sock, client_addr, current_channel_sk, status_payload)  # ACK to sender
 
             elif command_header == "BROADCAST":
-                content, ts = req_payload.get("content"), req_payload.get("timestamp")
+                content = req_payload.get("content")
+                ts = req_payload.get("timestamp")
                 sender = session["username"]
                 logging.info(f"Processing BROADCAST from '{sender}' via {client_addr}")
                 status_payload = {"type": "MESSAGE_STATUS"}
-                if not (content and validate_timestamp_internal(ts)):
+                if not (validate_broadcast_content(content) and validate_timestamp_internal(ts)):
                     status_payload.update(
                         {"status": "BROADCAST_FAIL", "detail": "Invalid broadcast format or timestamp."})
                     logging.warning(f"Invalid BROADCAST format from '{sender}': ts={ts}")
