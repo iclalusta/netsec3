@@ -67,16 +67,27 @@ command_completer = WordCompleter(
     ignore_case=True,
 )
 
+USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+
+
+def is_non_empty(text: str) -> bool:
+    """Return True if the given text contains non-whitespace characters."""
+    return len(text.strip()) > 0
+
+
+def is_valid_username(text: str) -> bool:
+    """Check that the text matches the allowed username format."""
+    return bool(USERNAME_PATTERN.fullmatch(text.strip()))
+
+
 non_empty_validator = Validator.from_callable(
-    lambda t: len(t.strip()) > 0,
+    is_non_empty,
     error_message="Input required",
     move_cursor_to_end=True,
 )
 
-# Username must be 3-16 characters of letters, numbers or underscore
-username_re = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
 username_validator = Validator.from_callable(
-    lambda t: bool(username_re.match(t.strip())),
+    is_valid_username,
     error_message="Username must start with a letter and contain only letters, numbers or '_' (3-16 chars)",
     move_cursor_to_end=True,
 )

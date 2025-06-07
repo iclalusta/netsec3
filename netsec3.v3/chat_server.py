@@ -7,6 +7,7 @@ import os
 import time
 import base64
 import hmac
+import re
 from collections import defaultdict
 
 try:
@@ -31,6 +32,19 @@ user_credentials_cr = {}
 client_sessions = {}
 request_tracker = defaultdict(list)
 used_internal_nonces = {}
+
+# Regular expression for allowed usernames
+USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+
+
+def validate_username_format(username):
+    """Return True if the username matches the allowed format."""
+    return isinstance(username, str) and bool(USERNAME_PATTERN.fullmatch(username))
+
+
+def validate_password_format(password):
+    """Return True if the password meets length requirements."""
+    return isinstance(password, str) and 6 <= len(password) <= 128
 
 
 def load_cr_credentials():
@@ -92,9 +106,13 @@ def validate_timestamp_internal(timestamp_str):
 
 
 def validate_username_password_format(username, password):
-    if not (3 <= len(username) <= 30 and username.isalnum()):
-        return False, "Username must be 3-30 alphanumeric chars."
-    if not (6 <= len(password) <= 128):
+    """Validate both username and password formats."""
+    if not validate_username_format(username):
+        return False, (
+            "Username must start with a letter and contain only letters, "
+            "numbers or '_' (3-16 chars)"
+        )
+    if not validate_password_format(password):
         return False, "Password must be 6-128 chars."
     return True, ""
 
