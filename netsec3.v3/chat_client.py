@@ -115,6 +115,7 @@ def print_command_list():
         "exit        Quit the application",
         style="system",
         markup=False,
+        highlight=False,
     )
     console.print("Type `help` at any time for details.", style="system")
 
@@ -147,6 +148,7 @@ def perform_key_exchange(sock, server_address):
             "<System> Attempting to establish secure channel with server...",
             style="system",
             markup=False,
+            highlight=False,
         )
         with Progress(transient=True) as progress:
             task = progress.add_task("[system]Performing key exchange...", total=10)
@@ -164,6 +166,7 @@ def perform_key_exchange(sock, server_address):
                 "! Secure channel setup failed: no response from server.",
                 style="error",
                 markup=False,
+                highlight=False,
             )
             return False
 
@@ -175,6 +178,7 @@ def perform_key_exchange(sock, server_address):
                 "<System> Secure channel established with server via ECDH.",
                 style="system",
                 markup=False,
+                highlight=False,
             )
             return True
         else:
@@ -183,6 +187,7 @@ def perform_key_exchange(sock, server_address):
                 "! Secure channel setup failed: Could not derive shared key.",
                 style="error",
                 markup=False,
+                highlight=False,
             )
             return False
     except Exception as e:
@@ -236,18 +241,21 @@ def receive_messages(sock):
                             "<Server> Signup successful! You can now signin.",
                             style="server",
                             markup=False,
+                            highlight=False,
                         )
                     elif msg_status == "SIGNUP_FAIL":
                         console.print(
                             f"<Server> Signup failed: {msg_detail}",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
                     else:
                         console.print(
                             f"<Server> Unexpected signup response: {msg_status}: {msg_detail}",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
 
                 elif msg_type == "AUTH_CHALLENGE":
@@ -261,6 +269,7 @@ def receive_messages(sock):
                             "\n<Server> Received incomplete auth challenge.",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
                         auth_challenge_data = None
                     else:
@@ -269,6 +278,7 @@ def receive_messages(sock):
                             "\n<Server> Authentication challenge received. Please provide password when prompted.",
                             style="server",
                             markup=False,
+                            highlight=False,
                         )
 
                 elif msg_type == "AUTH_RESULT":
@@ -278,6 +288,7 @@ def receive_messages(sock):
                             f"<Server> Welcome, {client_username}!",
                             style="server",
                             markup=False,
+                            highlight=False,
                         )
                     else:
                         is_authenticated = False
@@ -286,6 +297,7 @@ def receive_messages(sock):
                             f"<Server> Signin failed: {msg_detail}",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
                     auth_successful_event.set()
 
@@ -295,12 +307,14 @@ def receive_messages(sock):
                             f"<Server> Greeting acknowledged! {msg_detail}",
                             style="server",
                             markup=False,
+                            highlight=False,
                         )
                     else:
                         console.print(
                             f"<Server> Greeting response: {payload.get('status')} - {msg_detail}",
                             style="server",
                             markup=False,
+                            highlight=False,
                         )
 
                 elif msg_type == "SECURE_MESSAGE_INCOMING":
@@ -308,24 +322,28 @@ def receive_messages(sock):
                         f"<Secure Msg from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
                         style="server",
                         markup=False,
+                        highlight=False,
                     )
                 elif msg_type == "BROADCAST_INCOMING":
                     console.print(
                         f"<Secure Bcast from {payload.get('from_user', 'Unknown')} ({payload.get('timestamp', '?')})> {payload.get('content', '')}",
                         style="server",
                         markup=False,
+                        highlight=False,
                     )
                 elif msg_type == "MESSAGE_STATUS":
                     console.print(
                         f"<Server> {payload.get('status')}: {msg_detail}",
                         style="server",
                         markup=False,
+                        highlight=False,
                     )
                 elif msg_type == "SERVER_ERROR":
                     console.print(
                         f"<Server> Error: {msg_detail}",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                 else:
                     logging.warning(f"Received unknown encrypted message type from server: {msg_type}")
@@ -333,6 +351,7 @@ def receive_messages(sock):
                         f"<Server> Unknown type {msg_type}: {msg_detail}",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
 
             except ValueError as e:  # Decryption or JSON decode failed
@@ -341,6 +360,7 @@ def receive_messages(sock):
                     "\n<System> Error processing message from server. It might be corrupted or keys desynced.",
                     style="error",
                     markup=False,
+                    highlight=False,
                 )
             except Exception as e:
                 logging.error(f"Generic error processing encrypted server message: {e}", exc_info=True)
@@ -348,6 +368,7 @@ def receive_messages(sock):
                     f"\n<System> Unexpected error processing server message: {e}",
                     style="error",
                     markup=False,
+                    highlight=False,
                 )
 
             if not stop_event.is_set():
@@ -426,6 +447,7 @@ def client_main_loop(sock, server_address):
                         "<System> Username/password cannot be empty.",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                 else:
                     payload = {
@@ -440,6 +462,7 @@ def client_main_loop(sock, server_address):
                         f"<System> Signing up as {uname}...",
                         style="system",
                         markup=False,
+                        highlight=False,
                     )
                 print_command_list()
 
@@ -455,6 +478,7 @@ def client_main_loop(sock, server_address):
                         "<System> Username/password cannot be empty.",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                     continue
 
@@ -466,6 +490,7 @@ def client_main_loop(sock, server_address):
                     f"<System> Signing in as {uname}...",
                     style="system",
                     markup=False,
+                    highlight=False,
                 )
 
                 wait_start = time.time()
@@ -487,6 +512,7 @@ def client_main_loop(sock, server_address):
                                 "<Server> Signin failed: no response from server",
                                 style="error",
                                 markup=False,
+                                highlight=False,
                             )
                             client_username = None
                     except Exception as e:
@@ -494,6 +520,7 @@ def client_main_loop(sock, server_address):
                             f"<System> Error: {e}",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
                         logging.error(f"Client-side challenge processing error: {e}", exc_info=True)
                         client_username = None
@@ -502,17 +529,19 @@ def client_main_loop(sock, server_address):
                         "<Server> Signin failed: challenge timeout",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                     client_username = None
                 print_command_list()
 
             elif action_cmd == "message":
-                if not is_authenticated:
-                    console.print(
-                        "<System> Error: not signed in. Type `help` for usage.",
-                        style="error",
-                        markup=False,
-                    )
+            if not is_authenticated:
+                console.print(
+                    "<System> Error: not signed in. Type `help` for usage.",
+                    style="error",
+                    markup=False,
+                    highlight=False,
+                )
                 else:
                     parts = action_input.split(" ", 2)
                     if len(parts) > 2 and parts[2].strip():
@@ -523,12 +552,14 @@ def client_main_loop(sock, server_address):
                             f"<You> to {target_user}: {msg_content}",
                             style="client",
                             markup=False,
+                            highlight=False,
                         )
                     else:
                         console.print(
                             "<System> Error: usage message <target> <content>. Type `help` for usage.",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
 
             elif action_cmd == "broadcast":
@@ -537,6 +568,7 @@ def client_main_loop(sock, server_address):
                         "<System> Error: not signed in. Type `help` for usage.",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                 else:
                     parts = action_input.split(" ", 1)
@@ -548,12 +580,14 @@ def client_main_loop(sock, server_address):
                             f"<You> broadcast: {msg_content}",
                             style="client",
                             markup=False,
+                            highlight=False,
                         )
                     else:
                         console.print(
                             "<System> Error: usage broadcast <content>. Type `help` for usage.",
                             style="error",
                             markup=False,
+                            highlight=False,
                         )
 
             elif action_cmd == "greet":
@@ -562,6 +596,7 @@ def client_main_loop(sock, server_address):
                         "<System> Error: not signed in. Type `help` for usage.",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                 else:
                     send_secure_command_to_server(sock, server_address, "GREET", {"nonce": generate_nonce()})
@@ -569,6 +604,7 @@ def client_main_loop(sock, server_address):
                         "<You> greeting sent",
                         style="client",
                         markup=False,
+                        highlight=False,
                     )
 
             elif action_cmd == "help":
@@ -582,6 +618,7 @@ def client_main_loop(sock, server_address):
                     "exit        Quit the application",
                     style="system",
                     markup=False,
+                    highlight=False,
                 )
 
             elif action_cmd == "logs":
@@ -593,6 +630,7 @@ def client_main_loop(sock, server_address):
                         "<System> No log file found.",
                         style="error",
                         markup=False,
+                        highlight=False,
                     )
                     print_command_list()
 
@@ -603,6 +641,7 @@ def client_main_loop(sock, server_address):
                     f"<System> Error: unknown command '{action_input}'. Type `help` for usage.",
                     style="error",
                     markup=False,
+                    highlight=False,
                 )
                 print_command_list()
 
@@ -616,6 +655,7 @@ def client_main_loop(sock, server_address):
                 f"<System> An unexpected error occurred: {e}",
                 style="error",
                 markup=False,
+                highlight=False,
             )
 
     logging.info("Client main loop stopped.")  # INFO for thread lifecycle
@@ -627,6 +667,7 @@ if __name__ == "__main__":
             "Usage: python chat_client_secure.py <server_ip> <server_port>",
             style="system",
             markup=False,
+            highlight=False,
         )
         sys.exit(1)
     server_ip_arg, server_port_arg_str = sys.argv[1], sys.argv[2]
@@ -639,6 +680,7 @@ if __name__ == "__main__":
             f"Invalid port: {e}",
             style="error",
             markup=False,
+            highlight=False,
         )
 
     server_addr_tuple = (server_ip_arg, server_port_arg)
@@ -656,6 +698,7 @@ if __name__ == "__main__":
             f"<System> Network error: {se}. Could not connect or communicate.",
             style="error",
             markup=False,
+            highlight=False,
         )
     except Exception as e:
         logging.critical(f"Client critical setup error: {e}", exc_info=True)
@@ -663,6 +706,7 @@ if __name__ == "__main__":
             f"<System> A critical error occurred during client startup: {e}",
             style="error",
             markup=False,
+            highlight=False,
         )
     finally:
         logging.info("Client shutting down...")  # INFO for shutdown sequence
@@ -670,6 +714,7 @@ if __name__ == "__main__":
             "<System> Shutting down client...",
             style="system",
             markup=False,
+            highlight=False,
         )
         stop_event.set()
         if client_sock:
