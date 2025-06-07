@@ -11,12 +11,19 @@ import base64
 try:
     import crypto_utils
 except ImportError:
-    print("Error: crypto_utils.py not found. Make sure it's in the same directory.")
+    print(
+        "Error: crypto_utils.py not found. Make sure it's in the same"
+        " directory."
+    )
     sys.exit(1)
 
-# Configure logging: WARNING level for user-friendliness, DEBUG for troubleshooting
-# To see DEBUG logs, change level=logging.DEBUG temporarily
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - CLIENT - %(levelname)s - %(message)s')
+# Configure logging. Set level to WARNING by default.
+# Use DEBUG for troubleshooting. To see DEBUG logs, temporarily set
+# level=logging.DEBUG.
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s - CLIENT - %(levelname)s - %(message)s",
+)
 
 stop_event = threading.Event()
 is_authenticated = False
@@ -37,24 +44,36 @@ def generate_nonce():
 
 
 def perform_key_exchange(sock, server_address):
-    global client_ecdh_private_key, channel_sk, key_exchange_complete
+    """Perform ECDH key exchange with the server."""
+    global client_ecdh_private_key
     logging.debug("Initiating ECDH Key Exchange...")
     try:
-        client_ecdh_private_key, client_public_key_obj = crypto_utils.generate_ecdh_keys()
-        client_ecdh_public_key_b64 = crypto_utils.serialize_ecdh_public_key(client_public_key_obj)
+        client_ecdh_private_key, client_public_key_obj = (
+            crypto_utils.generate_ecdh_keys()
+        )
+        client_ecdh_public_key_b64 = crypto_utils.serialize_ecdh_public_key(
+            client_public_key_obj
+        )
         key_exchange_init_message = f"DH_INIT:{client_ecdh_public_key_b64}"
         sock.sendto(key_exchange_init_message.encode('utf-8'), server_address)
+        short_pubkey = client_ecdh_public_key_b64[:30]
         logging.debug(
-            f"Sent KEY_EXCHANGE_INIT (DH_INIT protocol msg) to server with ECDH pubkey: {client_ecdh_public_key_b64[:30]}...")
-
+            "Sent KEY_EXCHANGE_INIT (DH_INIT protocol msg) to server with "
+            f"ECDH pubkey: {short_pubkey}..."
+        )
         print("<System> Attempting to establish secure channel with server...")
         if not key_exchange_complete.wait(timeout=10.0):
-            logging.warning("KEY_EXCHANGE_RESPONSE timeout. Server did not respond or message lost.")
-            print("! Secure channel setup failed: Server did not respond in time.")
+            logging.warning(
+                "KEY_EXCHANGE_RESPONSE timeout. "
+                "Server did not respond or message lost."
+            )
+            print("! Secure channel setup failed: no response from server.")
             return False
 
         if channel_sk:
-            logging.info("ECDH Key Exchange Successful. ChannelSK established.")  # Keep as INFO for this critical step
+            logging.info(
+                "ECDH Key Exchange Successful. ChannelSK established."
+            )  # Keep as INFO for this critical step
             print("<System> Secure channel established with server via ECDH.")
             return True
         else:
@@ -68,7 +87,7 @@ def perform_key_exchange(sock, server_address):
 
 
 def receive_messages(sock):
-    global is_authenticated, client_username, client_ecdh_private_key, channel_sk, key_exchange_complete, auth_challenge_data, auth_successful_event
+    global is_authenticated, client_username, channel_sk, auth_challenge_data
     while not stop_event.is_set():
         try:
             sock.settimeout(1.0)
