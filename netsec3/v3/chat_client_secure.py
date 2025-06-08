@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -38,6 +39,9 @@ RECEIVE_TIMEOUT = float(os.getenv("RECEIVE_TIMEOUT", 1.0))
 AUTH_TIMEOUT = int(os.getenv("AUTH_TIMEOUT", 5))
 LOG_FILE = os.getenv("CLIENT_LOG_FILE", "client.log")
 CUSTOM_PROMPT = os.getenv("CHAT_PROMPT", "] ")
+NS_NONCE_SIZE = crypto_utils.AES_GCM_NONCE_SIZE
+HANDSHAKE_TIMEOUT = int(os.getenv("HANDSHAKE_TIMEOUT", 10))
+SESSION_KEY_LIFETIME = int(os.getenv("SESSION_KEY_LIFETIME", 3600))
 
 
 @dataclass
@@ -66,6 +70,10 @@ key_exchange_complete = threading.Event()
 
 auth_challenge_data = None
 auth_successful_event = threading.Event()
+
+server_addr_global: tuple[str, int] | None = None
+session_keys: dict[str, dict] = {}
+handshake_events: dict[str, threading.Event] = {}
 
 # These will be initialized in setup()
 console: Console
@@ -150,6 +158,13 @@ def generate_nonce() -> str:
 
     nonce = str(uuid.uuid4())
     logging.debug("Generated nonce %s", nonce)
+    return nonce
+
+
+def generate_nonce_bytes() -> bytes:
+    """Return cryptographically random nonce bytes."""
+    nonce = os.urandom(NS_NONCE_SIZE)
+    logging.debug("Generated nonce bytes %s", base64.b64encode(nonce)[:8])
     return nonce
 
 
@@ -266,6 +281,169 @@ def send_secure_command(sock: socket.socket, server_address: tuple[str, int],
         )
 
 
+def send_secure_text(sock: socket.socket, server_address: tuple[str, int],
+                     command_header: str, text: str) -> None:
+    """Encrypt plaintext under ChannelSK and send with a header."""
+    if not channel_sk:
+        console.print("! Cannot send command: Secure channel not established.",
+                      style="error")
+        return
+    try:
+        encrypted = crypto_utils.encrypt_aes_gcm(channel_sk, text.encode("utf-8"))
+        final_msg = f"{command_header}:{encrypted}"
+        sock.sendto(final_msg.encode("utf-8"), server_address)
+        logging.debug("Sent %s to server", command_header)
+    except Exception as exc:  # pragma: no cover - network failures
+        logging.error("Error sending %s: %s", command_header, exc, exc_info=True)
+
+
+def send_relay_message(sock: socket.socket, server_address: tuple[str, int],
+                       command_header: str, *parts: str) -> None:
+    """Send a plaintext message via the server relay to another peer."""
+    msg = f"{command_header}:{':'.join(parts)}"
+    sock.sendto(msg.encode("utf-8"), server_address)
+    logging.debug("Relayed %s message", command_header)
+
+
+def request_session_key(sock: socket.socket, server_address: tuple[str, int],
+                        peer: str) -> None:
+    """Initiate Needham-Schroeder session key request with the server."""
+    nonce1 = base64.b64encode(generate_nonce_bytes()).decode()
+    handshake_events[peer] = threading.Event()
+    session_keys[peer] = {"nonce1": nonce1, "state": "req"}
+    send_secure_text(sock, server_address, "NS_REQ", f"{peer}:{nonce1}")
+    logging.info("Requested session key for %s", peer)
+
+
+def send_ns_ticket(sock: socket.socket, server_address: tuple[str, int],
+                   peer: str) -> None:
+    entry = session_keys.get(peer)
+    if not entry:
+        return
+    key = entry["key"]
+    nonce2 = generate_nonce_bytes()
+    entry["nonce2"] = nonce2
+    handshake_events.setdefault(peer, threading.Event()).clear()
+    enc_nonce2 = crypto_utils.encrypt_aes_gcm_with_nonce(key, nonce2, nonce2)
+    send_relay_message(
+        sock,
+        server_address,
+        "NS_TICKET",
+        peer,
+        client_username or "",
+        entry["ticket"],
+        enc_nonce2,
+    )
+    entry["state"] = "ticket_sent"
+    logging.info("Sent NS_TICKET to %s", peer)
+
+
+def handle_ns_resp(sock: socket.socket, server_address: tuple[str, int], peer: str,
+                   encrypted_blob: str) -> None:
+    """Process server NS_RESP and send ticket to peer."""
+    try:
+        decrypted = crypto_utils.decrypt_aes_gcm(channel_sk, encrypted_blob)
+        data = crypto_utils.deserialize_payload(decrypted)
+    except Exception as exc:
+        logging.error("Failed to decrypt NS_RESP: %s", exc, exc_info=True)
+        return
+    entry = session_keys.get(peer)
+    if not entry or data.get("nonce1") != entry.get("nonce1"):
+        logging.warning("Invalid or unexpected NS_RESP for %s", peer)
+        return
+    key_bytes = base64.b64decode(data.get("K_AB", ""))
+    entry.update(
+        {
+            "key": key_bytes,
+            "ticket": data.get("ticket"),
+            "timestamp": time.time(),
+            "state": "got_key",
+        }
+    )
+    handshake_events.setdefault(peer, threading.Event()).clear()
+    send_ns_ticket(sock, server_address, peer)
+
+
+def handle_ns_ticket(
+    sock: socket.socket,
+    server_address: tuple[str, int],
+    sender: str,
+    ticket: str,
+    encrypted_nonce2: str,
+) -> None:
+    """Handle incoming NS_TICKET from another client."""
+    try:
+        ticket_plain = crypto_utils.decrypt_aes_gcm(channel_sk, ticket)
+        tdata = crypto_utils.deserialize_payload(ticket_plain)
+        key_bytes = base64.b64decode(tdata.get("K_AB", ""))
+        peer = tdata.get("sender", sender)
+    except Exception as exc:
+        logging.error("Failed to process ticket from %s: %s", sender, exc,
+                      exc_info=True)
+        return
+    entry = session_keys.setdefault(peer, {})
+    entry.update({"key": key_bytes, "ticket": ticket, "timestamp": time.time()})
+    handshake_events.setdefault(peer, threading.Event()).clear()
+    nonce2 = crypto_utils.decrypt_aes_gcm(key_bytes, encrypted_nonce2)
+    nonce3 = generate_nonce_bytes()
+    entry.update({"nonce2": nonce2, "nonce3": nonce3})
+    n2_minus = (int.from_bytes(nonce2, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
+    plaintext = n2_minus.to_bytes(NS_NONCE_SIZE, "big") + nonce3
+    enc_auth = crypto_utils.encrypt_aes_gcm_with_nonce(key_bytes, nonce3, plaintext)
+    send_relay_message(sock, server_address, "NS_AUTH", peer, client_username or "", enc_auth)
+    entry["state"] = "auth_sent"
+
+
+def complete_ns_auth(sock: socket.socket, server_address: tuple[str, int], peer: str,
+                      encrypted_auth: str) -> None:
+    """Finish handshake after receiving NS_AUTH from peer."""
+    entry = session_keys.get(peer)
+    if not entry:
+        return
+    key = entry["key"]
+    nonce2 = entry.get("nonce2")
+    if not nonce2:
+        return
+    data = crypto_utils.decrypt_aes_gcm(key, encrypted_auth)
+    n2_minus1 = data[:NS_NONCE_SIZE]
+    nonce3 = data[NS_NONCE_SIZE:]
+    expected = ((int.from_bytes(nonce2, "big") - 1) % (1 << (8 * NS_NONCE_SIZE)))
+    if n2_minus1 != expected.to_bytes(NS_NONCE_SIZE, "big"):
+        logging.warning("Nonce verification failed for peer %s", peer)
+        return
+    entry["nonce3"] = nonce3
+    n3_minus = (int.from_bytes(nonce3, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
+    enc_fin = crypto_utils.encrypt_aes_gcm_with_nonce(
+        key, nonce3, n3_minus.to_bytes(NS_NONCE_SIZE, "big")
+    )
+    send_relay_message(
+        sock, server_address, "NS_FIN", peer, client_username or "", enc_fin
+    )
+    entry["state"] = "complete"
+    entry["timestamp"] = time.time()
+    if peer in handshake_events:
+        handshake_events[peer].set()
+
+
+def handle_ns_fin(sender: str, encrypted_fin: str) -> None:
+    """Verify final handshake message from peer."""
+    entry = session_keys.get(sender)
+    if not entry:
+        return
+    key = entry.get("key")
+    nonce3 = entry.get("nonce3")
+    if not (key and nonce3):
+        return
+    data = crypto_utils.decrypt_aes_gcm(key, encrypted_fin)
+    expected = (
+        (int.from_bytes(nonce3, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
+    )
+    if data == expected.to_bytes(NS_NONCE_SIZE, "big"):
+        entry["state"] = "complete"
+        entry["timestamp"] = time.time()
+        handshake_events.setdefault(sender, threading.Event()).set()
+
+
 # ---------------------------------------------------------------------------
 # Message receiver
 # ---------------------------------------------------------------------------
@@ -354,18 +532,26 @@ def handle_encrypted_payload(payload: dict) -> None:
             )
 
     elif msg_type == "SECURE_MESSAGE_INCOMING":
-        console.print(
-            f"<Secure Msg from {payload.get('from_user', 'Unknown')} "
-            f"({payload.get('timestamp', '?')})> {payload.get('content', '')}",
-            style="server",
-        )
+        ts_raw = payload.get("timestamp")
+        try:
+            ts_fmt = datetime.fromtimestamp(float(ts_raw)).strftime("%H:%M:%S")
+        except Exception:  # pragma: no cover - malformed timestamp
+            ts_fmt = "?"
+        sender = payload.get("from_user", "Unknown")
+        content = payload.get("content", "")
+        with patch_stdout(raw=True):
+            console.print(f"[{ts_fmt}] <{sender}> {content}", style="server")
 
     elif msg_type == "BROADCAST_INCOMING":
-        console.print(
-            f"<Secure Bcast from {payload.get('from_user', 'Unknown')} "
-            f"({payload.get('timestamp', '?')})> {payload.get('content', '')}",
-            style="server",
-        )
+        ts_raw = payload.get("timestamp")
+        try:
+            ts_fmt = datetime.fromtimestamp(float(ts_raw)).strftime("%H:%M:%S")
+        except Exception:  # pragma: no cover - malformed timestamp
+            ts_fmt = "?"
+        sender = payload.get("from_user", "Unknown")
+        content = payload.get("content", "")
+        with patch_stdout(raw=True):
+            console.print(f"[{ts_fmt}] <Bcast {sender}> {content}", style="server")
 
     elif msg_type == "MESSAGE_STATUS":
         console.print(
@@ -437,6 +623,49 @@ def receive_messages(sock: socket.socket) -> None:
                     "Received non-key-exchange message but no ChannelSK: %s",
                     message_str,
                 )
+                continue
+
+            parts = message_str.split(":", 4)
+            header = parts[0]
+            if header == "NS_RESP" and len(parts) >= 3:
+                handle_ns_resp(sock, server_addr_global, parts[1], parts[2])
+                continue
+            if header == "NS_TICKET" and len(parts) >= 5:
+                handle_ns_ticket(sock, server_addr_global, parts[2], parts[3], parts[4])
+                continue
+            if header == "NS_AUTH" and len(parts) >= 4:
+                complete_ns_auth(sock, server_addr_global, parts[2], parts[3])
+                continue
+            if header == "NS_FIN" and len(parts) >= 4:
+                handle_ns_fin(parts[2], parts[3])
+                continue
+            if header == "CHAT" and len(parts) >= 5:
+                sender = parts[2]
+                nonce = base64.b64decode(parts[3])
+                ciphertext = parts[4]
+                entry = session_keys.get(sender)
+                if entry and entry.get("key"):
+                    try:
+                        pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        with patch_stdout(raw=True):
+                            console.print(f"[{ts}] <{sender}> {pt.decode()}", style="server")
+                    except Exception as exc:
+                        logging.warning("Failed to decrypt CHAT from %s: %s", sender, exc)
+                continue
+            if header == "BCAST" and len(parts) >= 5:
+                sender = parts[2]
+                nonce = base64.b64decode(parts[3])
+                ciphertext = parts[4]
+                entry = session_keys.get(sender)
+                if entry and entry.get("key"):
+                    try:
+                        pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        with patch_stdout(raw=True):
+                            console.print(f"[{ts}] <Bcast {sender}> {pt.decode()}", style="server")
+                    except Exception as exc:
+                        logging.warning("Failed to decrypt BCAST from %s: %s", sender, exc)
                 continue
 
             try:
@@ -619,13 +848,34 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
     parts = action_input.split(" ", 2)
     if len(parts) > 2 and parts[2].strip():
         target_user, msg_content = parts[1], parts[2]
-        payload = {
-            "to_user": target_user,
-            "content": msg_content,
-            "timestamp": str(time.time()),
-        }
-        send_secure_command(sock, server_address, "SECURE_MESSAGE", payload)
-        console.print(f"<You> to {target_user}: {msg_content}", style="client")
+        entry = session_keys.get(target_user)
+        if not entry or entry.get("state") != "complete" or (
+            time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME
+        ):
+            request_session_key(sock, server_address, target_user)
+            ev = handshake_events.get(target_user)
+            if ev:
+                ev.wait(timeout=HANDSHAKE_TIMEOUT)
+        entry = session_keys.get(target_user)
+        if not entry or entry.get("state") != "complete":
+            console.print(f"<System> Handshake with {target_user} failed.", style="error")
+            return
+        key = entry["key"]
+        nonce = generate_nonce_bytes()
+        ct = crypto_utils.encrypt_aes_gcm_detached(key, nonce, msg_content.encode())
+        send_relay_message(
+            sock,
+            server_address,
+            "CHAT",
+            target_user,
+            client_username or "",
+            base64.b64encode(nonce).decode(),
+            ct,
+        )
+        ts = datetime.now().strftime("%H:%M:%S")
+        console.print(
+            f"[{ts}] <You> to {target_user}: {msg_content}", style="client"
+        )
     else:
         console.print(
             "<System> Error: usage message <target> <content>. "
@@ -648,9 +898,38 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
     parts = action_input.split(" ", 1)
     if len(parts) > 1 and parts[1].strip():
         msg_content = parts[1]
-        payload = {"content": msg_content, "timestamp": str(time.time())}
-        send_secure_command(sock, server_address, "BROADCAST", payload)
-        console.print(f"<You> broadcast: {msg_content}", style="client")
+        sent_any = False
+        for peer, entry in list(session_keys.items()):
+            if (
+                entry.get("state") != "complete"
+                or time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME
+            ):
+                request_session_key(sock, server_address, peer)
+                evt = handshake_events.get(peer)
+                if evt:
+                    evt.wait(timeout=HANDSHAKE_TIMEOUT)
+            entry = session_keys.get(peer)
+            if not entry or entry.get("state") != "complete":
+                continue
+            nonce = generate_nonce_bytes()
+            ct = crypto_utils.encrypt_aes_gcm_detached(
+                entry["key"], nonce, msg_content.encode()
+            )
+            send_relay_message(
+                sock,
+                server_address,
+                "BCAST",
+                peer,
+                client_username or "",
+                base64.b64encode(nonce).decode(),
+                ct,
+            )
+            sent_any = True
+        if not sent_any:
+            payload = {"content": msg_content, "timestamp": str(time.time())}
+            send_secure_command(sock, server_address, "BROADCAST", payload)
+        ts = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[{ts}] <You> broadcast: {msg_content}", style="client")
     else:
         console.print(
             "<System> Error: usage broadcast <content>. "
@@ -769,6 +1048,8 @@ def run_client(server_ip: str, server_port: int, cfg: ClientConfig) -> None:
 
     setup_environment(cfg)
     server_addr = (server_ip, server_port)
+    global server_addr_global
+    server_addr_global = server_addr
     client_sock: socket.socket | None = None
     receiver_thread: threading.Thread | None = None
 
