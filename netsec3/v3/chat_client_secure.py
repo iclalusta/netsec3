@@ -881,16 +881,18 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
             if time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME:
                 continue
             nonce = generate_nonce_bytes()
-            ct = crypto_utils.encrypt_aes_gcm_detached(entry["key"], nonce, msg_content.encode())
-                send_relay_message(
-                    sock,
-                    server_address,
-                    "BCAST",
-                    peer,
-                    client_username or "",
-                    base64.b64encode(nonce).decode(),
-                    ct,
-                )
+            ct = crypto_utils.encrypt_aes_gcm_detached(
+                entry["key"], nonce, msg_content.encode()
+            )
+            send_relay_message(
+                sock,
+                server_address,
+                "BCAST",
+                peer,
+                client_username or "",
+                base64.b64encode(nonce).decode(),
+                ct,
+            )
         console.print(f"<You> broadcast: {msg_content}", style="client")
     else:
         console.print(
