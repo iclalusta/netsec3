@@ -322,11 +322,7 @@ def handle_encrypted_payload(payload: dict) -> None:
                 "Auth challenge received: %s...",
                 auth_challenge_data["challenge"][:10],
             )
-            console.print(
-                "\n<Server> Authentication challenge received. "
-                "Please provide password when prompted.",
-                style="server",
-            )
+
 
     elif msg_type == "AUTH_RESULT":
         if payload.get("success"):
@@ -516,8 +512,7 @@ def handle_signup(
 
     payload = {"username": uname, "password": pword, "nonce": generate_nonce()}
     send_secure_command(sock, server_address, "SECURE_SIGNUP", payload)
-    console.print(f"<System> Signing up as {uname}...", style="system")
-    print_command_list()
+    console.print(f"\n<System> Signing up as {uname}...", style="system")
 
 
 def handle_signin(
@@ -551,7 +546,7 @@ def handle_signin(
         "AUTH_REQUEST",
         {"username": uname},
     )
-    console.print(f"<System> Signing in as {uname}...", style="system")
+    console.print(f"\n<System> Signing in as {uname}...", style="system")
 
     wait_start = time.time()
     while (
@@ -608,7 +603,6 @@ def handle_signin(
             style="error",
         )
         client_username = None
-    print_command_list()
 
 
 def handle_message(sock: socket.socket, server_address: tuple[str, int],
@@ -694,7 +688,6 @@ def handle_logs() -> None:
             console.pager(logf.read())
     except FileNotFoundError:
         console.print("<System> No log file found.", style="error")
-        print_command_list()
 
 
 def handle_exit() -> None:
@@ -750,7 +743,6 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                         "Type `help` for usage.",
                         style="error",
                     )
-                    print_command_list()
 
             except EOFError:
                 stop_event.set()
