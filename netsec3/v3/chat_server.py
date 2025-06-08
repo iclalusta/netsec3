@@ -427,8 +427,12 @@ def server(port):
                 else:
                     target_addr, target_sk = None, None
                     for addr, s_data in client_sessions.items():  # Find recipient
-                        if s_data.get("username") == to_user:
+                        if (
+                            s_data.get("username") == to_user
+                            and active_usernames.get(to_user) == addr
+                        ):
                             target_addr, target_sk = addr, s_data.get("channel_sk")
+                            break
                     if target_addr and target_sk:
                         send_encrypted_response(sock, target_addr, target_sk,
                                                 {"type": "SECURE_MESSAGE_INCOMING", "from_user": sender,

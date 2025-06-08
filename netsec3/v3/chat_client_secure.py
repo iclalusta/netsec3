@@ -74,6 +74,8 @@ auth_successful_event = threading.Event()
 server_addr_global: tuple[str, int] | None = None
 session_keys: dict[str, dict] = {}
 handshake_events: dict[str, threading.Event] = {}
+online_users: set[str] = set()
+users_event = threading.Event()
 
 # These will be initialized in setup()
 console: Console
@@ -573,6 +575,9 @@ def handle_encrypted_payload(payload: dict) -> None:
 
     elif msg_type == "USERS_LIST":
         users = payload.get("users", [])
+        global online_users
+        online_users = set(users)
+        users_event.set()
         if users:
             console.print(
                 "<Server> Online: " + ", ".join(users),
@@ -902,6 +907,14 @@ def handle_users(sock: socket.socket, server_address: tuple[str, int]) -> None:
     send_secure_command(sock, server_address, "USERS", {"nonce": generate_nonce()})
 
 
+def refresh_online_users(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Refresh the cached list of online users."""
+
+    users_event.clear()
+    send_secure_command(sock, server_address, "USERS", {"nonce": generate_nonce()})
+    users_event.wait(timeout=2.0)
+
+
 def handle_message(sock: socket.socket, server_address: tuple[str, int],
                    action_input: str) -> None:
     """Send a private message to another user."""
@@ -916,6 +929,10 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
     parts = action_input.split(" ", 2)
     if len(parts) > 2 and parts[2].strip():
         target_user, msg_content = parts[1], parts[2]
+        refresh_online_users(sock, server_address)
+        if online_users and target_user not in online_users:
+            console.print(f"<System> User '{target_user}' is offline.", style="error")
+            return
         entry = session_keys.get(target_user)
         if not entry or entry.get("state") != "complete" or (
             time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME

@@ -108,6 +108,8 @@ key_exchange_complete = threading.Event()
 
 auth_challenge_data = None
 auth_successful_event = threading.Event()
+online_users = set()
+users_event = threading.Event()
 
 
 def print_command_list():
@@ -308,6 +310,9 @@ def handle_encrypted_payload(payload):
 
     elif msg_type == "USERS_LIST":
         users = payload.get("users", [])
+        global online_users
+        online_users = set(users)
+        users_event.set()
         if users:
             console.print(
                 "<Server> Online: " + ", ".join(users),
@@ -436,6 +441,14 @@ def send_secure_command_to_server(sock, server_address, command_type_header, pay
     except Exception as e:
         console.print(f"\n! Error sending secure command '{command_type_header}': {e}", style="error")
         logging.error(f"Error sending secure command '{command_type_header}': {e}", exc_info=True)
+
+
+def refresh_online_users(sock, server_address):
+    """Query the server for the online user list synchronously."""
+
+    users_event.clear()
+    send_secure_command_to_server(sock, server_address, "USERS", {"nonce": generate_nonce()})
+    users_event.wait(timeout=2)
 
 
 def client_main_loop(sock, server_address):
@@ -592,6 +605,15 @@ def client_main_loop(sock, server_address):
                     parts = action_input.split(" ", 2)
                     if len(parts) > 2 and parts[2].strip():
                         target_user, msg_content = parts[1], parts[2]
+                        refresh_online_users(sock, server_address)
+                        if online_users and target_user not in online_users:
+                            console.print(
+                                f"<System> User '{target_user}' is offline.",
+                                style="error",
+                                markup=False,
+                            )
+                            print_command_list()
+                            continue
                         payload = {
                             "to_user": target_user,
                             "content": msg_content,
