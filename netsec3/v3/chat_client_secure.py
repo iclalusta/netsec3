@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.validation import Validator
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.theme import Theme
 from rich.progress import Progress
@@ -711,53 +712,58 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
     """Prompt for commands until the user exits."""
 
     print_command_list()
-    while not stop_event.is_set():
-        try:
-            action_input = session.prompt(
-                config.prompt,
-                completer=command_completer,
-                is_password=False,
-                validator=None,
-            ).strip()
-            if not action_input:
-                continue
-            action_parts = action_input.split(" ", 1)
-            action_cmd = action_parts[0].lower()
+    # Use patch_stdout with raw=True so ANSI color codes are preserved
+    # when printing server messages during interactive prompts.
+    with patch_stdout(raw=True):
+        while not stop_event.is_set():
+            try:
+                action_input = session.prompt(
+                    config.prompt,
+                    completer=command_completer,
+                    is_password=False,
+                    validator=None,
+                ).strip()
+                if not action_input:
+                    continue
+                action_parts = action_input.split(" ", 1)
+                action_cmd = action_parts[0].lower()
 
-            if action_cmd == "signup":
-                handle_signup(sock, server_address)
-            elif action_cmd == "signin":
-                handle_signin(sock, server_address)
-            elif action_cmd == "message":
-                handle_message(sock, server_address, action_input)
-            elif action_cmd == "broadcast":
-                handle_broadcast(sock, server_address, action_input)
-            elif action_cmd == "greet":
-                handle_greet(sock, server_address)
-            elif action_cmd == "help":
-                handle_help()
-            elif action_cmd == "logs":
-                handle_logs()
-            elif action_cmd == "exit":
-                handle_exit()
-            else:
+                if action_cmd == "signup":
+                    handle_signup(sock, server_address)
+                elif action_cmd == "signin":
+                    handle_signin(sock, server_address)
+                elif action_cmd == "message":
+                    handle_message(sock, server_address, action_input)
+                elif action_cmd == "broadcast":
+                    handle_broadcast(sock, server_address, action_input)
+                elif action_cmd == "greet":
+                    handle_greet(sock, server_address)
+                elif action_cmd == "help":
+                    handle_help()
+                elif action_cmd == "logs":
+                    handle_logs()
+                elif action_cmd == "exit":
+                    handle_exit()
+                else:
+                    console.print(
+                        f"<System> Error: unknown command '{action_input}'. "
+                        "Type `help` for usage.",
+                        style="error",
+                    )
+                    print_command_list()
+
+            except EOFError:
+                stop_event.set()
+            except KeyboardInterrupt:
+                stop_event.set()
+            except Exception as exc:
+                logging.error(
+                    "Error in client main loop: %s", exc, exc_info=True
+                )
                 console.print(
-                    f"<System> Error: unknown command '{action_input}'. "
-                    "Type `help` for usage.",
+                    f"<System> An unexpected error occurred: {exc}",
                     style="error",
                 )
-                print_command_list()
-
-        except EOFError:
-            stop_event.set()
-        except KeyboardInterrupt:
-            stop_event.set()
-        except Exception as exc:
-            logging.error("Error in client main loop: %s", exc, exc_info=True)
-            console.print(
-                f"<System> An unexpected error occurred: {exc}",
-                style="error",
-            )
 
     logging.info("Client main loop stopped.")
 
