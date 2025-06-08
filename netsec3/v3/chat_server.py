@@ -166,7 +166,14 @@ def relay_raw(sock, header, sender_addr, raw_blob):
         logging.info("%s target %s not found", header, target)
         return
     sock.sendto(f"{header}:{raw_blob}".encode("utf-8"), target_addr)
-    logging.debug("Relayed %s from %s to %s", header, sender_addr, target_addr)
+    sender_user = client_sessions.get(sender_addr, {}).get("username", sender_addr)
+    logging.info(
+        "Relayed %s from %s to %s (len=%d)",
+        header,
+        sender_user,
+        target,
+        len(raw_blob),
+    )
 
 
 def server(port):
@@ -234,6 +241,9 @@ def server(port):
                 except Exception as e:
                     logging.warning("Failed to process NS_REQ from %s: %s", client_addr, e)
                     continue
+                logging.info(
+                    "Received NS_REQ from %s for peer %s", session.get("username"), peer
+                )
                 target_addr, target_sk = None, None
                 for addr, s_data in client_sessions.items():
                     if s_data.get("username") == peer and s_data.get("channel_sk"):

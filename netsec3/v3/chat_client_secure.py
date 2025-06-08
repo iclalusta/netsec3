@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -638,8 +639,9 @@ def receive_messages(sock: socket.socket) -> None:
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
+                        ts = datetime.now().strftime("%H:%M:%S")
                         with patch_stdout(raw=True):
-                            console.print(f"<{sender}> {pt.decode()}", style="server")
+                            console.print(f"[{ts}] <{sender}> {pt.decode()}", style="server")
                     except Exception as exc:
                         logging.warning("Failed to decrypt CHAT from %s: %s", sender, exc)
                 continue
@@ -651,8 +653,9 @@ def receive_messages(sock: socket.socket) -> None:
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
+                        ts = datetime.now().strftime("%H:%M:%S")
                         with patch_stdout(raw=True):
-                            console.print(f"<Bcast {sender}> {pt.decode()}", style="server")
+                            console.print(f"[{ts}] <Bcast {sender}> {pt.decode()}", style="server")
                     except Exception as exc:
                         logging.warning("Failed to decrypt BCAST from %s: %s", sender, exc)
                 continue
@@ -861,7 +864,10 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
             base64.b64encode(nonce).decode(),
             ct,
         )
-        console.print(f"<You> to {target_user}: {msg_content}", style="client")
+        ts = datetime.now().strftime("%H:%M:%S")
+        console.print(
+            f"[{ts}] <You> to {target_user}: {msg_content}", style="client"
+        )
     else:
         console.print(
             "<System> Error: usage message <target> <content>. "
@@ -884,6 +890,7 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
     parts = action_input.split(" ", 1)
     if len(parts) > 1 and parts[1].strip():
         msg_content = parts[1]
+        sent_any = False
         for peer, entry in list(session_keys.items()):
             if (
                 entry.get("state") != "complete"
@@ -909,7 +916,12 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
                 base64.b64encode(nonce).decode(),
                 ct,
             )
-        console.print(f"<You> broadcast: {msg_content}", style="client")
+            sent_any = True
+        if not sent_any:
+            payload = {"content": msg_content, "timestamp": str(time.time())}
+            send_secure_command(sock, server_address, "BROADCAST", payload)
+        ts = datetime.now().strftime("%H:%M:%S")
+        console.print(f"[{ts}] <You> broadcast: {msg_content}", style="client")
     else:
         console.print(
             "<System> Error: usage broadcast <content>. "
