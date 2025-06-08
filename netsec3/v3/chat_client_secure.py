@@ -1007,9 +1007,12 @@ def handle_logs() -> None:
         console.print("<System> No log file found.", style="error")
 
 
-def handle_exit() -> None:
-    """Exit the application."""
+def handle_exit(sock: socket.socket | None = None,
+                server_address: tuple[str, int] | None = None) -> None:
+    """Exit the application, signing out if authenticated."""
 
+    if is_authenticated and sock and server_address:
+        handle_logout(sock, server_address)
     console.print("Exiting...", style="system")
     stop_event.set()
 
@@ -1055,7 +1058,7 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                 elif action_cmd == "logs":
                     handle_logs()
                 elif action_cmd == "exit":
-                    handle_exit()
+                    handle_exit(sock, server_address)
                 else:
                     console.print(
                         f"<System> Error: unknown command '{action_input}'. "
@@ -1064,9 +1067,9 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                     )
 
             except EOFError:
-                stop_event.set()
+                handle_exit(sock, server_address)
             except KeyboardInterrupt:
-                stop_event.set()
+                handle_exit(sock, server_address)
             except Exception as exc:
                 logging.error(
                     "Error in client main loop: %s", exc, exc_info=True
@@ -1121,6 +1124,14 @@ def run_client(server_ip: str, server_port: int, cfg: ClientConfig) -> None:
     finally:
         logging.info("Client shutting down...")
         console.print("<System> Shutting down client...", style="system")
+        if client_sock and is_authenticated:
+            try:
+                send_secure_command(client_sock, server_addr, "SIGNOUT",
+                                   {"nonce": generate_nonce()})
+            except Exception as exc:
+                logging.error("Error sending SIGNOUT during shutdown: %s",
+                              exc,
+                              exc_info=True)
         stop_event.set()
         if client_sock:
             client_sock.close()
