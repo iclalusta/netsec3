@@ -40,6 +40,7 @@ user_credentials_cr = {}
 client_sessions = {}
 request_tracker = defaultdict(list)
 used_internal_nonces = {}
+active_usernames = {}
 
 # Regular expression for allowed usernames
 USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
@@ -310,7 +311,12 @@ def server(port):
                 username = req_payload.get("username")
                 logging.info(f"Processing AUTH_REQUEST for username '{username}' from {client_addr}")
                 user_data = user_credentials_cr.get(username)
-                if user_data:
+                if username in active_usernames and active_usernames[username] != client_addr:
+                    logging.info(f"AUTH_REQUEST denied for '{username}' from {client_addr}: already signed in")
+                    send_encrypted_response(sock, client_addr, current_channel_sk,
+                                            {"type": "AUTH_RESULT", "success": False,
+                                             "detail": "User already signed in."})
+                elif user_data:
                     server_challenge = crypto_utils.generate_salt(16).hex()
                     session["pending_challenge"] = server_challenge
                     session["pending_auth_username"] = username
@@ -348,10 +354,15 @@ def server(port):
                         verifier_b = bytes.fromhex(user_data["verifier"])
                         expected_proof_b = crypto_utils.compute_hmac_sha256(verifier_b, server_challenge)
                         if hmac.compare_digest(expected_proof_b, client_proof_b):
-                            session["username"] = username
-                            session["authenticated_at"] = time.time()
-                            auth_res_payload.update({"success": True, "detail": f"Welcome back, {username}!"})
-                            logging.info(f"Authentication SUCCESS for '{username}'@{client_addr}")
+                            if username in active_usernames and active_usernames.get(username) != client_addr:
+                                auth_res_payload["detail"] = "User already signed in."
+                                logging.info(f"AUTH_RESPONSE denied for '{username}' from {client_addr}: already signed in")
+                            else:
+                                session["username"] = username
+                                session["authenticated_at"] = time.time()
+                                active_usernames[username] = client_addr
+                                auth_res_payload.update({"success": True, "detail": f"Welcome back, {username}!"})
+                                logging.info(f"Authentication SUCCESS for '{username}'@{client_addr}")
                         else:
                             auth_res_payload["detail"] = "Invalid credentials (proof mismatch)."
                             logging.warning(f"Authentication FAIL (proof mismatch) for '{username}'@{client_addr}")
@@ -374,6 +385,17 @@ def server(port):
                 send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "GREETING_RESPONSE", "status": "GREETING_OK",
                                          "detail": f"Hello {session['username']}! Greeting received."})
+
+            elif command_header == "SIGNOUT":
+                username = session.get("username")
+                if username and active_usernames.get(username) == client_addr:
+                    del active_usernames[username]
+                session["username"] = None
+                session["authenticated_at"] = None
+                logging.info(f"User '{username}' signed out from {client_addr}")
+                send_encrypted_response(sock, client_addr, current_channel_sk,
+                                        {"type": "SIGNOUT_RESULT", "success": True,
+                                         "detail": "Signed out."})
 
             elif command_header == "SECURE_MESSAGE":
                 to_user = req_payload.get("to_user")
@@ -435,8 +457,11 @@ def server(port):
 
         except ConnectionResetError:
             if client_addr in client_sessions:
+                username_left = client_sessions[client_addr].get('username')
                 logging.info(
-                    f"Client {client_sessions[client_addr].get('username', client_addr)} disconnected (ConnectionResetError). Session removed.")
+                    f"Client {username_left or client_addr} disconnected (ConnectionResetError). Session removed.")
+                if username_left and active_usernames.get(username_left) == client_addr:
+                    del active_usernames[username_left]
                 del client_sessions[client_addr]
             else:
                 logging.warning(f"ConnectionResetError from {client_addr} (no active session).")
