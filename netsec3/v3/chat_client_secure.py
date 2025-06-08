@@ -556,10 +556,18 @@ def handle_encrypted_payload(payload: dict) -> None:
             console.print(f"[{ts_fmt}] <Bcast {sender}> {content}", style="server")
 
     elif msg_type == "MESSAGE_STATUS":
+        status = payload.get("status")
         console.print(
-            f"<Server> {payload.get('status')}: {msg_detail}",
+            f"<Server> {status}: {msg_detail}",
             style="server",
         )
+        if status == "MESSAGE_FAIL":
+            m = re.search(r"User '([^']+)'", msg_detail or "")
+            if m:
+                entry = session_keys.get(m.group(1))
+                if entry:
+                    entry.clear()
+                    entry["state"] = "fail"
 
     elif msg_type == "SIGNOUT_RESULT":
         if payload.get("success"):
