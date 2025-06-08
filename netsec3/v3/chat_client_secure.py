@@ -638,7 +638,7 @@ def receive_messages(sock: socket.socket) -> None:
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
-                        with patch_stdout():
+                        with patch_stdout(raw=True):
                             console.print(f"<{sender}> {pt.decode()}", style="server")
                     except Exception as exc:
                         logging.warning("Failed to decrypt CHAT from %s: %s", sender, exc)
@@ -651,7 +651,7 @@ def receive_messages(sock: socket.socket) -> None:
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
-                        with patch_stdout():
+                        with patch_stdout(raw=True):
                             console.print(f"<Bcast {sender}> {pt.decode()}", style="server")
                     except Exception as exc:
                         logging.warning("Failed to decrypt BCAST from %s: %s", sender, exc)
