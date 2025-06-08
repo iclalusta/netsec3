@@ -1,13 +1,18 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "netsec3.v3")))
 import unittest
 import subprocess
 import socket
 import time
 import uuid
 import base64
-import crypto_utils
+try:
+    from . import crypto_utils
+except ImportError:
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    import crypto_utils
 
 
 SERVER_PORT = 15000
@@ -38,11 +43,31 @@ def recv_payload(sock, sk):
     return crypto_utils.deserialize_payload(decrypted)
 
 
+def sign_up_and_sign_in(sock, sk, username, password):
+    send_command(sock, sk, "SECURE_SIGNUP", {"username": username, "password": password})
+    recv_payload(sock, sk)
+    send_command(sock, sk, "AUTH_REQUEST", {"username": username})
+    chal = recv_payload(sock, sk)
+    salt = bytes.fromhex(chal["salt"])
+    key = crypto_utils.derive_password_verifier(password, salt)
+    proof = crypto_utils.compute_hmac_sha256(key, chal["challenge"])
+    proof_b64 = base64.b64encode(proof).decode()
+    send_command(
+        sock,
+        sk,
+        "AUTH_RESPONSE",
+        {"challenge_response": proof_b64, "client_nonce": str(uuid.uuid4())},
+    )
+    resp = recv_payload(sock, sk)
+    assert resp.get("success")
+
+
 class ChatProtocolTest(unittest.TestCase):
     def setUp(self):
+        server_script = os.path.join(os.path.dirname(__file__), "chat_server.py")
         self.server = subprocess.Popen([
             sys.executable,
-            os.path.join("netsec3.v3", "chat_server.py"),
+            server_script,
             str(SERVER_PORT),
         ])
         time.sleep(1.0)
@@ -105,6 +130,34 @@ class ChatProtocolTest(unittest.TestCase):
         self.assertEqual(incoming_b.get("type"), "BROADCAST_INCOMING")
         ack_b = recv_payload(self.sock2, self.sk2)
         self.assertEqual(ack_b.get("status"), "BROADCAST_SENT")
+
+    def test_oversized_message(self):
+        sign_up_and_sign_in(self.sock1, self.sk1, "user1", "password1")
+        sign_up_and_sign_in(self.sock2, self.sk2, "user2", "password2")
+
+        long_msg = "x" * 513
+        send_command(
+            self.sock1,
+            self.sk1,
+            "SECURE_MESSAGE",
+            {"to_user": "user2", "content": long_msg, "timestamp": str(time.time())},
+        )
+        ack = recv_payload(self.sock1, self.sk1)
+        self.assertEqual(ack.get("status"), "MESSAGE_FAIL")
+
+    def test_oversized_broadcast(self):
+        sign_up_and_sign_in(self.sock1, self.sk1, "user1", "password1")
+        sign_up_and_sign_in(self.sock2, self.sk2, "user2", "password2")
+
+        long_msg = "y" * 513
+        send_command(
+            self.sock1,
+            self.sk1,
+            "BROADCAST",
+            {"content": long_msg, "timestamp": str(time.time())},
+        )
+        ack = recv_payload(self.sock1, self.sk1)
+        self.assertEqual(ack.get("status"), "BROADCAST_FAIL")
 
 
 if __name__ == "__main__":
