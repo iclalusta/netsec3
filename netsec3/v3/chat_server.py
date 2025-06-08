@@ -252,6 +252,7 @@ def server(port):
                         break
                 if not (target_addr and target_sk):
                     logging.info("NS_REQ for offline user %s from %s", peer, client_addr)
+                    sock.sendto(f"NS_FAIL:{peer}:offline".encode("utf-8"), client_addr)
                     continue
                 session_key = os.urandom(crypto_utils.AES_KEY_SIZE)
                 ticket_bytes = crypto_utils.serialize_payload({

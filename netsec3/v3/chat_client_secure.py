@@ -111,6 +111,7 @@ def setup_environment(cfg: ClientConfig) -> None:
         [
             "signup",
             "signin",
+            "logout",
             "message",
             "broadcast",
             "greet",
@@ -128,6 +129,7 @@ def print_command_list() -> None:
     commands = (
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
+        "logout      Logout from the server\n"
         "message     Send a private message: message <target> <content>\n"
         "broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -559,6 +561,14 @@ def handle_encrypted_payload(payload: dict) -> None:
             style="server",
         )
 
+    elif msg_type == "SIGNOUT_RESULT":
+        if payload.get("success"):
+            is_authenticated = False
+            client_username = None
+            console.print("<Server> Signed out successfully.", style="server")
+        else:
+            console.print(f"<Server> Signout failed: {msg_detail}", style="error")
+
     elif msg_type == "SERVER_ERROR":
         console.print(f"<Server> Error: {msg_detail}", style="error")
 
@@ -629,6 +639,15 @@ def receive_messages(sock: socket.socket) -> None:
             header = parts[0]
             if header == "NS_RESP" and len(parts) >= 3:
                 handle_ns_resp(sock, server_addr_global, parts[1], parts[2])
+                continue
+            if header == "NS_FAIL" and len(parts) >= 3:
+                peer = parts[1]
+                reason = parts[2]
+                entry = session_keys.setdefault(peer, {})
+                entry["state"] = "fail"
+                handshake_events.setdefault(peer, threading.Event()).set()
+                with patch_stdout(raw=True):
+                    console.print(f"<System> Handshake with {peer} failed: {reason}.", style="error")
                 continue
             if header == "NS_TICKET" and len(parts) >= 5:
                 handle_ns_ticket(sock, server_addr_global, parts[2], parts[3], parts[4])
@@ -834,6 +853,21 @@ def handle_signin(
         client_username = None
 
 
+def handle_logout(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Sign out from the server."""
+
+    global is_authenticated, client_username
+
+    if not is_authenticated:
+        console.print("<System> Error: not signed in.", style="error")
+        return
+
+    send_secure_command(sock, server_address, "SIGNOUT", {"nonce": generate_nonce()})
+    is_authenticated = False
+    client_username = None
+    console.print("<System> Logged out.", style="system")
+
+
 def handle_message(sock: socket.socket, server_address: tuple[str, int],
                    action_input: str) -> None:
     """Send a private message to another user."""
@@ -1004,6 +1038,8 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                     handle_signup(sock, server_address)
                 elif action_cmd == "signin":
                     handle_signin(sock, server_address)
+                elif action_cmd == "logout":
+                    handle_logout(sock, server_address)
                 elif action_cmd == "message":
                     handle_message(sock, server_address, action_input)
                 elif action_cmd == "broadcast":

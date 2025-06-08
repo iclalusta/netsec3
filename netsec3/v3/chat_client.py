@@ -69,7 +69,7 @@ def prompt_username(message: str) -> str:
     return uname
 
 command_completer = WordCompleter(
-    ["signup", "signin", "signout", "message", "broadcast", "greet", "help", "logs", "exit"],
+    ["signup", "signin", "logout", "message", "broadcast", "greet", "help", "logs", "exit"],
     ignore_case=True,
 )
 
@@ -114,7 +114,7 @@ def print_command_list():
     console.print(
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
-        "signout     Logout from the server\n"
+        "logout      Logout from the server\n"
         "message     Send a private message: message <target> <content>\n"
         f"broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -545,7 +545,7 @@ def client_main_loop(sock, server_address):
                     client_username = None
                 print_command_list()
 
-            elif action_cmd == "signout":
+            elif action_cmd == "logout":
                 if not is_authenticated:
                     console.print(
                         "<System> Error: not signed in.",
@@ -557,7 +557,7 @@ def client_main_loop(sock, server_address):
                     is_authenticated = False
                     client_username = None
                     console.print(
-                        "<System> Signed out.",
+                        "<System> Logged out.",
                         style="system",
                         markup=False,
                     )
@@ -638,7 +638,7 @@ def client_main_loop(sock, server_address):
                 console.print(
                     "signup      Sign up with a new username and password\n"
                     "signin      Log in with your credentials\n"
-                    "signout     Logout from the server\n"
+                    "logout      Logout from the server\n"
                     "message     Send a private message: message <target> <content>\n"
                     "broadcast   Send a message to all users: broadcast <content>\n"
                     "greet       Send a friendly greeting\n"
