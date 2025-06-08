@@ -27,12 +27,14 @@ console = Console(theme=theme, markup=False, highlight=False)
 
 try:
     from . import crypto_utils
+    from . import config
 except ImportError:
     import os
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
     try:
         import crypto_utils
+        import config  # type: ignore
     except ImportError:
         console.print(
             "Error: crypto_utils.py not found. Make sure it's in the same directory.",
@@ -73,7 +75,7 @@ command_completer = WordCompleter(
     ignore_case=True,
 )
 
-USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+USERNAME_PATTERN = re.compile(config.USERNAME_PATTERN)
 
 
 def is_non_empty(text: str) -> bool:

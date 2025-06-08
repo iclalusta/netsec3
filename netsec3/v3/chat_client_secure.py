@@ -25,15 +25,17 @@ from rich.progress import Progress
 
 try:
     from . import crypto_utils
+    from . import config
 except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     import crypto_utils
+    import config  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-USERNAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_]{2,15}$"
+USERNAME_PATTERN = config.USERNAME_PATTERN
 KEY_EXCHANGE_TIMEOUT = int(os.getenv("KEY_EXCHANGE_TIMEOUT", 10))
 RECEIVE_TIMEOUT = float(os.getenv("RECEIVE_TIMEOUT", 1.0))
 AUTH_TIMEOUT = int(os.getenv("AUTH_TIMEOUT", 5))

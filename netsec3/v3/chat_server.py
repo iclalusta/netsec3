@@ -7,17 +7,19 @@ import os
 import time
 import base64
 import hmac
-import re
-from collections import defaultdict
 
 try:
     from . import crypto_utils
+    from . import config
+    from . import server_utils
 except ImportError:
     import os
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
     try:
         import crypto_utils
+        import config  # type: ignore
+        import server_utils  # type: ignore
     except ImportError:
         print("Error: crypto_utils.py not found.")
         sys.exit(1)
@@ -28,42 +30,14 @@ logging.basicConfig(
     format="%(asctime)s - SERVER - %(levelname)s - %(message)s",
 )
 
-CREDENTIALS_FILE = "user_credentials_ecdh_cr.json"
-MAX_REQUESTS_PER_WINDOW = 20
-REQUEST_WINDOW_SECONDS = 60
-INTERNAL_NONCE_EXPIRY_SECONDS = 300
-TIMESTAMP_WINDOW_SECONDS = 60
-MAX_MSG_LENGTH = 512
-RELAY_HEADERS = {"NS_TICKET", "NS_AUTH", "NS_FIN", "CHAT", "BCAST"}
-
 user_credentials_cr = {}
-client_sessions = {}
-request_tracker = defaultdict(list)
-used_internal_nonces = {}
-active_usernames = {}
-
-# Regular expression for allowed usernames
-USERNAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,15}$")
+# Reuse data structures from server_utils so helper functions can access them
+client_sessions = server_utils.client_sessions
+active_usernames = server_utils.active_usernames
+CREDENTIALS_FILE = config.CREDENTIALS_FILE
+RELAY_HEADERS = config.RELAY_HEADERS
 
 
-def validate_username_format(username):
-    """Return True if the username matches the allowed format."""
-    return isinstance(username, str) and bool(USERNAME_PATTERN.fullmatch(username))
-
-
-def validate_password_format(password):
-    """Return True if the password meets length requirements."""
-    return isinstance(password, str) and 6 <= len(password) <= 128
-
-
-def validate_message_content(content):
-    """Return True if message content length is within allowed bounds."""
-    return isinstance(content, str) and 0 < len(content) <= MAX_MSG_LENGTH
-
-
-def validate_broadcast_content(content):
-    """Return True if broadcast content length is within allowed bounds."""
-    return isinstance(content, str) and 0 < len(content) <= MAX_MSG_LENGTH
 
 
 def load_cr_credentials():
@@ -89,92 +63,6 @@ def save_cr_credentials():
         logging.error(f"Save CR creds fail: {e}")
 
 
-def is_rate_limited(ip_address):
-    current_time = time.time()
-    request_tracker[ip_address] = [ts for ts in request_tracker[ip_address] if
-                                   current_time - ts < REQUEST_WINDOW_SECONDS]
-    if len(request_tracker[ip_address]) >= MAX_REQUESTS_PER_WINDOW:
-        logging.warning(f"Rate limit exceeded for IP: {ip_address}")
-        return True
-    request_tracker[ip_address].append(current_time)
-    return False
-
-
-def validate_internal_nonce(nonce_value):
-    current_time = time.time()
-    global used_internal_nonces
-    used_internal_nonces = {n: ts for n, ts in used_internal_nonces.items() if
-                            current_time - ts < INTERNAL_NONCE_EXPIRY_SECONDS}
-    if nonce_value in used_internal_nonces:
-        logging.warning(f"Internal nonce reuse attempt: '{nonce_value}'")
-        return False  # More specific log
-    used_internal_nonces[nonce_value] = current_time
-    logging.debug(f"Internal nonce validated: {nonce_value}")
-    return True
-
-
-def validate_timestamp_internal(timestamp_str):
-    try:
-        if abs(time.time() - float(timestamp_str)) <= TIMESTAMP_WINDOW_SECONDS:
-            return True
-        logging.warning(
-            f"Invalid internal timestamp: {timestamp_str}. Diff: {abs(time.time() - float(timestamp_str))}")
-        return False
-    except ValueError:
-        logging.warning(f"Malformed internal timestamp: {timestamp_str}")
-        return False
-
-
-def validate_username_password_format(username, password):
-    """Validate both username and password formats."""
-    if not validate_username_format(username):
-        return False, (
-            "Username must start with a letter and contain only letters, "
-            "numbers or '_' (3-16 chars)"
-        )
-    if not validate_password_format(password):
-        return False, "Password must be 6-128 chars."
-    return True, ""
-
-
-def send_encrypted_response(sock, client_address, channel_sk, response_payload_dict):
-    if not channel_sk:
-        logging.error(
-            f"No ChannelSK for {client_address}. Cannot send encrypted response."
-        )
-    try:
-        plaintext_bytes = crypto_utils.serialize_payload(response_payload_dict)
-        b64_encrypted_blob = crypto_utils.encrypt_aes_gcm(channel_sk, plaintext_bytes)
-        sock.sendto(b64_encrypted_blob.encode('utf-8'), client_address)
-        logging.debug(
-            f"Sent encrypted to {client_address}: Type {response_payload_dict.get('type')}, Success {response_payload_dict.get('success')}, Detail: {response_payload_dict.get('detail', '')[:30]}...")
-    except Exception as e:
-        logging.error(f"Error sending encrypted response to {client_address}: {e}", exc_info=True)
-
-
-def relay_raw(sock, header, sender_addr, raw_blob):
-    """Relay raw message strings from one client to another."""
-    target, _, rest = raw_blob.partition(":")
-    if not rest:
-        logging.warning("Malformed %s from %s", header, sender_addr)
-        return
-    target_addr = None
-    for addr, s_data in client_sessions.items():
-        if s_data.get("username") == target and s_data.get("channel_sk"):
-            target_addr = addr
-            break
-    if not target_addr:
-        logging.info("%s target %s not found", header, target)
-        return
-    sock.sendto(f"{header}:{raw_blob}".encode("utf-8"), target_addr)
-    sender_user = client_sessions.get(sender_addr, {}).get("username", sender_addr)
-    logging.info(
-        "Relayed %s from %s to %s (len=%d)",
-        header,
-        sender_user,
-        target,
-        len(raw_blob),
-    )
 
 
 def server(port):
@@ -183,6 +71,7 @@ def server(port):
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(('', port))
         logging.info(f"Secure ECDH+CR server started on port {port}...")
     except Exception as e:
@@ -195,7 +84,7 @@ def server(port):
             client_ip = client_addr[0]
             logging.debug(f"Raw from {client_addr}: '{message_str[:100]}...'")  # DEBUG for raw messages
 
-            if is_rate_limited(client_ip):
+            if server_utils.is_rate_limited(client_ip):
                 continue  # Rate limit log is already a WARNING
 
             parts = message_str.split(':', 1)
@@ -232,7 +121,7 @@ def server(port):
             session["last_seen"] = time.time()
 
             if command_header in RELAY_HEADERS:
-                relay_raw(sock, command_header, client_addr, payload_b64_str)
+                server_utils.relay_raw(sock, command_header, client_addr, payload_b64_str)
                 continue
 
             if command_header == "NS_REQ":
@@ -278,7 +167,7 @@ def server(port):
                     f"Decrypted payload from {client_addr} ({command_header}): {req_payload}")  # DEBUG for decrypted content
             except Exception as e:
                 logging.warning(f"Payload decryption/decode failed for '{command_header}' from {client_addr}: {e}")
-                send_encrypted_response(sock, client_addr, current_channel_sk,
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "SERVER_ERROR",
                                          "detail": "Payload decryption/decode failed. Please retry."})
                 continue
@@ -290,7 +179,7 @@ def server(port):
                 password = req_payload.get("password")
                 logging.info(f"Processing SECURE_SIGNUP for username '{username}' from {client_addr}")
                 response_payload["type"] = "AUTH_RESPONSE"
-                is_valid, fmt_msg = validate_username_password_format(username, password)
+                is_valid, fmt_msg = server_utils.validate_username_password_format(username, password)
                 if not is_valid:
                     response_payload.update({"status": "SIGNUP_FAIL", "detail": fmt_msg})
                 elif username in user_credentials_cr:
@@ -306,7 +195,7 @@ def server(port):
                     save_cr_credentials()  # Logs success/failure internally
                     response_payload.update({"status": "SIGNUP_OK", "detail": "Signup successful. You can now signin."})
                     logging.info(f"SECURE_SIGNUP successful for '{username}' from {client_addr}")
-                send_encrypted_response(sock, client_addr, current_channel_sk, response_payload)
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk, response_payload)
 
             elif command_header == "AUTH_REQUEST":
                 username = req_payload.get("username")
@@ -314,7 +203,7 @@ def server(port):
                 user_data = user_credentials_cr.get(username)
                 if username in active_usernames and active_usernames[username] != client_addr:
                     logging.info(f"AUTH_REQUEST denied for '{username}' from {client_addr}: already signed in")
-                    send_encrypted_response(sock, client_addr, current_channel_sk,
+                    server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                             {"type": "AUTH_RESULT", "success": False,
                                              "detail": "User already signed in."})
                 elif user_data:
@@ -327,11 +216,11 @@ def server(port):
                                                                             crypto_utils.PBKDF2_ITERATIONS),
                                          "pbkdf2_key_length": user_data.get("pbkdf2_key_length",
                                                                             crypto_utils.PBKDF2_KEY_LENGTH)}
-                    send_encrypted_response(sock, client_addr, current_channel_sk, challenge_payload)
+                    server_utils.send_encrypted_response(sock, client_addr, current_channel_sk, challenge_payload)
                     logging.info(f"Sent AUTH_CHALLENGE to '{username}'@{client_addr}")
                 else:
                     logging.warning(f"AUTH_REQUEST for unknown user '{username}' from {client_addr}")
-                    send_encrypted_response(sock, client_addr, current_channel_sk,
+                    server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                             {"type": "AUTH_RESULT", "success": False, "detail": "Username not found."})
 
             elif command_header == "AUTH_RESPONSE":
@@ -346,9 +235,9 @@ def server(port):
                 if not (client_proof_b64 and client_req_nonce and username and server_challenge and user_data):
                     auth_res_payload["detail"] = "Invalid auth response or missing session state."
                     logging.warning(f"Invalid AUTH_RESPONSE from {client_addr} for user {username}: missing data.")
-                elif not validate_internal_nonce(client_req_nonce):
+                elif not server_utils.validate_internal_nonce(client_req_nonce):
                     auth_res_payload["detail"] = "Invalid or reused request token (nonce)."
-                    # Log for this already in validate_internal_nonce
+                    # Log for this already in server_utils.validate_internal_nonce
                 else:
                     try:
                         client_proof_b = base64.b64decode(client_proof_b64)
@@ -373,17 +262,17 @@ def server(port):
 
                 session["pending_challenge"] = None
                 session["pending_auth_username"] = None
-                send_encrypted_response(sock, client_addr, current_channel_sk, auth_res_payload)
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk, auth_res_payload)
 
             elif not session.get("username"):  # Check for authenticated commands below
                 logging.warning(f"Unauthenticated command '{command_header}' from {client_addr}. Denying.")
-                send_encrypted_response(sock, client_addr, current_channel_sk,
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "AUTH_RESULT", "success": False,
                                          "detail": "Not signed in. Please signin first."})
 
             elif command_header == "GREET":
                 logging.info(f"Processing GREET from '{session['username']}'@{client_addr}")
-                send_encrypted_response(sock, client_addr, current_channel_sk,
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "GREETING_RESPONSE", "status": "GREETING_OK",
                                          "detail": f"Hello {session['username']}! Greeting received."})
 
@@ -392,7 +281,7 @@ def server(port):
                     f"Processing USERS request from '{session['username']}'@{client_addr}"
                 )
                 online_list = list(active_usernames.keys())
-                send_encrypted_response(
+                server_utils.send_encrypted_response(
                     sock,
                     client_addr,
                     current_channel_sk,
@@ -410,7 +299,7 @@ def server(port):
                 session["username"] = None
                 session["authenticated_at"] = None
                 logging.info(f"User '{username}' signed out from {client_addr}")
-                send_encrypted_response(sock, client_addr, current_channel_sk,
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "SIGNOUT_RESULT", "success": True,
                                          "detail": "Signed out."})
 
@@ -421,7 +310,7 @@ def server(port):
                 sender = session["username"]
                 logging.info(f"Processing SECURE_MESSAGE from '{sender}' to '{to_user}' via {client_addr}")
                 status_payload = {"type": "MESSAGE_STATUS"}
-                if not (validate_username_format(to_user) and validate_message_content(content) and validate_timestamp_internal(ts)):
+                if not (server_utils.validate_username_format(to_user) and server_utils.validate_message_content(content) and server_utils.validate_timestamp_internal(ts)):
                     status_payload.update({"status": "MESSAGE_FAIL", "detail": "Invalid message format or timestamp."})
                     logging.warning(f"Invalid SECURE_MESSAGE format from '{sender}': to={to_user}, ts={ts}")
                 else:
@@ -434,7 +323,7 @@ def server(port):
                             target_addr, target_sk = addr, s_data.get("channel_sk")
                             break
                     if target_addr and target_sk:
-                        send_encrypted_response(sock, target_addr, target_sk,
+                        server_utils.send_encrypted_response(sock, target_addr, target_sk,
                                                 {"type": "SECURE_MESSAGE_INCOMING", "from_user": sender,
                                                  "content": content, "timestamp": ts})
                         status_payload.update(
@@ -444,7 +333,7 @@ def server(port):
                         status_payload.update(
                             {"status": "MESSAGE_FAIL", "detail": f"User '{to_user}' not found or is offline."})
                         logging.info(f"SECURE_MESSAGE from '{sender}' to offline/unknown user '{to_user}'")
-                send_encrypted_response(sock, client_addr, current_channel_sk, status_payload)  # ACK to sender
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk, status_payload)  # ACK to sender
 
             elif command_header == "BROADCAST":
                 content = req_payload.get("content")
@@ -452,7 +341,7 @@ def server(port):
                 sender = session["username"]
                 logging.info(f"Processing BROADCAST from '{sender}' via {client_addr}")
                 status_payload = {"type": "MESSAGE_STATUS"}
-                if not (validate_broadcast_content(content) and validate_timestamp_internal(ts)):
+                if not (server_utils.validate_broadcast_content(content) and server_utils.validate_timestamp_internal(ts)):
                     status_payload.update(
                         {"status": "BROADCAST_FAIL", "detail": "Invalid broadcast format or timestamp."})
                     logging.warning(f"Invalid BROADCAST format from '{sender}': ts={ts}")
@@ -460,19 +349,19 @@ def server(port):
                     count = 0
                     for addr, s_data in list(client_sessions.items()):
                         if addr != client_addr and s_data.get("username") and s_data.get("channel_sk"):
-                            send_encrypted_response(sock, addr, s_data["channel_sk"],
+                            server_utils.send_encrypted_response(sock, addr, s_data["channel_sk"],
                                                     {"type": "BROADCAST_INCOMING", "from_user": sender,
                                                      "content": content, "timestamp": ts})
                             count += 1
                     status_payload.update(
                         {"status": "BROADCAST_SENT", "detail": f"Broadcast sent to {count} other active users."})
                     logging.info(f"Relayed BROADCAST from '{sender}' to {count} other clients.")
-                send_encrypted_response(sock, client_addr, current_channel_sk, status_payload)
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk, status_payload)
 
             else:
                 logging.warning(
                     f"Unknown authenticated command '{command_header}' from '{session.get('username', 'UNKNOWN')}'@{client_addr}")
-                send_encrypted_response(sock, client_addr, current_channel_sk,
+                server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "SERVER_ERROR",
                                          "detail": f"Unknown or unsupported command: {command_header}"})
 
@@ -492,7 +381,7 @@ def server(port):
             logging.error(f"Unexpected critical error processing data from {client_addr}: {e}", exc_info=True)
             s_err = client_sessions.get(client_addr)  # Attempt to send encrypted error if session exists
             if s_err and s_err.get("channel_sk"):
-                send_encrypted_response(sock, client_addr, s_err["channel_sk"], {"type": "SERVER_ERROR",
+                server_utils.send_encrypted_response(sock, client_addr, s_err["channel_sk"], {"type": "SERVER_ERROR",
                                                                                  "detail": "An unexpected internal server error occurred. Please try again."})
 
 
