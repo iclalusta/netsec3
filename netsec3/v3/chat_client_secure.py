@@ -532,18 +532,26 @@ def handle_encrypted_payload(payload: dict) -> None:
             )
 
     elif msg_type == "SECURE_MESSAGE_INCOMING":
-        console.print(
-            f"<Secure Msg from {payload.get('from_user', 'Unknown')} "
-            f"({payload.get('timestamp', '?')})> {payload.get('content', '')}",
-            style="server",
-        )
+        ts_raw = payload.get("timestamp")
+        try:
+            ts_fmt = datetime.fromtimestamp(float(ts_raw)).strftime("%H:%M:%S")
+        except Exception:  # pragma: no cover - malformed timestamp
+            ts_fmt = "?"
+        sender = payload.get("from_user", "Unknown")
+        content = payload.get("content", "")
+        with patch_stdout(raw=True):
+            console.print(f"[{ts_fmt}] <{sender}> {content}", style="server")
 
     elif msg_type == "BROADCAST_INCOMING":
-        console.print(
-            f"<Secure Bcast from {payload.get('from_user', 'Unknown')} "
-            f"({payload.get('timestamp', '?')})> {payload.get('content', '')}",
-            style="server",
-        )
+        ts_raw = payload.get("timestamp")
+        try:
+            ts_fmt = datetime.fromtimestamp(float(ts_raw)).strftime("%H:%M:%S")
+        except Exception:  # pragma: no cover - malformed timestamp
+            ts_fmt = "?"
+        sender = payload.get("from_user", "Unknown")
+        content = payload.get("content", "")
+        with patch_stdout(raw=True):
+            console.print(f"[{ts_fmt}] <Bcast {sender}> {content}", style="server")
 
     elif msg_type == "MESSAGE_STATUS":
         console.print(
