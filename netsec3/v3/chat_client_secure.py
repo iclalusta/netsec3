@@ -322,6 +322,7 @@ def send_ns_ticket(sock: socket.socket, server_address: tuple[str, int],
     key = entry["key"]
     nonce2 = generate_nonce_bytes()
     entry["nonce2"] = nonce2
+    handshake_events.setdefault(peer, threading.Event()).clear()
     enc_nonce2 = crypto_utils.encrypt_aes_gcm_with_nonce(key, nonce2, nonce2)
     send_relay_message(
         sock,
@@ -350,8 +351,15 @@ def handle_ns_resp(sock: socket.socket, server_address: tuple[str, int], peer: s
         logging.warning("Invalid or unexpected NS_RESP for %s", peer)
         return
     key_bytes = base64.b64decode(data.get("K_AB", ""))
-    entry.update({"key": key_bytes, "ticket": data.get("ticket"),
-                  "timestamp": time.time(), "state": "got_key"})
+    entry.update(
+        {
+            "key": key_bytes,
+            "ticket": data.get("ticket"),
+            "timestamp": time.time(),
+            "state": "got_key",
+        }
+    )
+    handshake_events.setdefault(peer, threading.Event()).clear()
     send_ns_ticket(sock, server_address, peer)
 
 
@@ -373,8 +381,8 @@ def handle_ns_ticket(
                       exc_info=True)
         return
     entry = session_keys.setdefault(peer, {})
-    entry.update({"key": key_bytes, "ticket": ticket,
-                  "timestamp": time.time()})
+    entry.update({"key": key_bytes, "ticket": ticket, "timestamp": time.time()})
+    handshake_events.setdefault(peer, threading.Event()).clear()
     nonce2 = crypto_utils.decrypt_aes_gcm(key_bytes, encrypted_nonce2)
     nonce3 = generate_nonce_bytes()
     entry.update({"nonce2": nonce2, "nonce3": nonce3})
@@ -411,6 +419,7 @@ def complete_ns_auth(sock: socket.socket, server_address: tuple[str, int], peer:
         sock, server_address, "NS_FIN", peer, client_username or "", enc_fin
     )
     entry["state"] = "complete"
+    entry["timestamp"] = time.time()
     if peer in handshake_events:
         handshake_events[peer].set()
 
@@ -430,8 +439,8 @@ def handle_ns_fin(sender: str, encrypted_fin: str) -> None:
     )
     if data == expected.to_bytes(NS_NONCE_SIZE, "big"):
         entry["state"] = "complete"
-        if sender in handshake_events:
-            handshake_events[sender].set()
+        entry["timestamp"] = time.time()
+        handshake_events.setdefault(sender, threading.Event()).set()
 
 
 # ---------------------------------------------------------------------------
@@ -876,9 +885,16 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
     if len(parts) > 1 and parts[1].strip():
         msg_content = parts[1]
         for peer, entry in list(session_keys.items()):
-            if entry.get("state") != "complete":
-                continue
-            if time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME:
+            if (
+                entry.get("state") != "complete"
+                or time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME
+            ):
+                request_session_key(sock, server_address, peer)
+                evt = handshake_events.get(peer)
+                if evt:
+                    evt.wait(timeout=HANDSHAKE_TIMEOUT)
+            entry = session_keys.get(peer)
+            if not entry or entry.get("state") != "complete":
                 continue
             nonce = generate_nonce_bytes()
             ct = crypto_utils.encrypt_aes_gcm_detached(
