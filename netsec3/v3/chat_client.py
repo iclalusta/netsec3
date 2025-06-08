@@ -69,7 +69,7 @@ def prompt_username(message: str) -> str:
     return uname
 
 command_completer = WordCompleter(
-    ["signup", "signin", "message", "broadcast", "greet", "help", "logs", "exit"],
+    ["signup", "signin", "logout", "users", "message", "broadcast", "greet", "help", "logs", "exit"],
     ignore_case=True,
 )
 
@@ -108,12 +108,16 @@ key_exchange_complete = threading.Event()
 
 auth_challenge_data = None
 auth_successful_event = threading.Event()
+online_users = set()
+users_event = threading.Event()
 
 
 def print_command_list():
     console.print(
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
+        "logout      Logout from the server\n"
+        "users       List online users\n"
         "message     Send a private message: message <target> <content>\n"
         f"broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -304,6 +308,36 @@ def handle_encrypted_payload(payload):
             markup=False,
         )
 
+    elif msg_type == "USERS_LIST":
+        users = payload.get("users", [])
+        global online_users
+        online_users = set(users)
+        users_event.set()
+        if users:
+            console.print(
+                "<Server> Online: " + ", ".join(users),
+                style="server",
+                markup=False,
+            )
+        else:
+            console.print("<Server> No users online.", style="server", markup=False)
+
+    elif msg_type == "SIGNOUT_RESULT":
+        if payload.get("success"):
+            is_authenticated = False
+            client_username = None
+            console.print(
+                "<Server> Signed out successfully.",
+                style="server",
+                markup=False,
+            )
+        else:
+            console.print(
+                f"<Server> Signout failed: {msg_detail}",
+                style="error",
+                markup=False,
+            )
+
     elif msg_type == "SERVER_ERROR":
         console.print(
             f"<Server> Error: {msg_detail}",
@@ -407,6 +441,14 @@ def send_secure_command_to_server(sock, server_address, command_type_header, pay
     except Exception as e:
         console.print(f"\n! Error sending secure command '{command_type_header}': {e}", style="error")
         logging.error(f"Error sending secure command '{command_type_header}': {e}", exc_info=True)
+
+
+def refresh_online_users(sock, server_address):
+    """Query the server for the online user list synchronously."""
+
+    users_event.clear()
+    send_secure_command_to_server(sock, server_address, "USERS", {"nonce": generate_nonce()})
+    users_event.wait(timeout=2)
 
 
 def client_main_loop(sock, server_address):
@@ -528,6 +570,30 @@ def client_main_loop(sock, server_address):
                     client_username = None
                 print_command_list()
 
+            elif action_cmd == "logout":
+                if not is_authenticated:
+                    console.print(
+                        "<System> Error: not signed in.",
+                        style="error",
+                        markup=False,
+                    )
+                else:
+                    send_secure_command_to_server(sock, server_address, "SIGNOUT", {"nonce": generate_nonce()})
+                    is_authenticated = False
+                    client_username = None
+                    console.print(
+                        "<System> Logged out.",
+                        style="system",
+                        markup=False,
+                    )
+                print_command_list()
+            elif action_cmd == "users":
+                if not is_authenticated:
+                    console.print("<System> Error: not signed in.", style="error", markup=False)
+                else:
+                    send_secure_command_to_server(sock, server_address, "USERS", {"nonce": generate_nonce()})
+                print_command_list()
+
             elif action_cmd == "message":
                 if not is_authenticated:
                     console.print(
@@ -539,6 +605,15 @@ def client_main_loop(sock, server_address):
                     parts = action_input.split(" ", 2)
                     if len(parts) > 2 and parts[2].strip():
                         target_user, msg_content = parts[1], parts[2]
+                        refresh_online_users(sock, server_address)
+                        if online_users and target_user not in online_users:
+                            console.print(
+                                f"<System> User '{target_user}' is offline.",
+                                style="error",
+                                markup=False,
+                            )
+                            print_command_list()
+                            continue
                         payload = {
                             "to_user": target_user,
                             "content": msg_content,
@@ -603,6 +678,8 @@ def client_main_loop(sock, server_address):
                 console.print(
                     "signup      Sign up with a new username and password\n"
                     "signin      Log in with your credentials\n"
+                    "logout      Logout from the server\n"
+                    "users       List online users\n"
                     "message     Send a private message: message <target> <content>\n"
                     "broadcast   Send a message to all users: broadcast <content>\n"
                     "greet       Send a friendly greeting\n"

@@ -159,3 +159,30 @@ def test_needham_schroeder_chat(tmp_path):
         server.wait(timeout=5)
         if os.path.exists("user_credentials_ecdh_cr.json"):
             os.remove("user_credentials_ecdh_cr.json")
+
+
+def test_ns_req_offline_user(tmp_path):
+    server = run_server()
+    time.sleep(1.0)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2)
+        sk = ecdh_handshake(sock)
+
+        sign_up_and_in(sock, sk, "alice", "password1")
+
+        nonce1 = base64.b64encode(os.urandom(NONCE_SIZE)).decode()
+        plain = f"ghost:{nonce1}".encode()
+        enc = crypto_utils.encrypt_aes_gcm(sk, plain)
+        sock.sendto(f"NS_REQ:{enc}".encode(), SERVER_ADDR)
+
+        data, _ = sock.recvfrom(4096)
+        parts = data.decode().split(":", 2)
+        assert parts[0] == "NS_FAIL" and parts[1] == "ghost"
+        assert parts[2] == "offline"
+    finally:
+        sock.close()
+        server.terminate()
+        server.wait(timeout=5)
+        if os.path.exists("user_credentials_ecdh_cr.json"):
+            os.remove("user_credentials_ecdh_cr.json")

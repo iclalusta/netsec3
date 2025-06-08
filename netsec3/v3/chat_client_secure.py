@@ -74,6 +74,8 @@ auth_successful_event = threading.Event()
 server_addr_global: tuple[str, int] | None = None
 session_keys: dict[str, dict] = {}
 handshake_events: dict[str, threading.Event] = {}
+online_users: set[str] = set()
+users_event = threading.Event()
 
 # These will be initialized in setup()
 console: Console
@@ -111,6 +113,8 @@ def setup_environment(cfg: ClientConfig) -> None:
         [
             "signup",
             "signin",
+            "logout",
+            "users",
             "message",
             "broadcast",
             "greet",
@@ -128,6 +132,8 @@ def print_command_list() -> None:
     commands = (
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
+        "logout      Logout from the server\n"
+        "users       List online users\n"
         "message     Send a private message: message <target> <content>\n"
         "broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -554,10 +560,39 @@ def handle_encrypted_payload(payload: dict) -> None:
             console.print(f"[{ts_fmt}] <Bcast {sender}> {content}", style="server")
 
     elif msg_type == "MESSAGE_STATUS":
+        status = payload.get("status")
         console.print(
-            f"<Server> {payload.get('status')}: {msg_detail}",
+            f"<Server> {status}: {msg_detail}",
             style="server",
         )
+        if status == "MESSAGE_FAIL":
+            m = re.search(r"User '([^']+)'", msg_detail or "")
+            if m:
+                entry = session_keys.get(m.group(1))
+                if entry:
+                    entry.clear()
+                    entry["state"] = "fail"
+
+    elif msg_type == "USERS_LIST":
+        users = payload.get("users", [])
+        global online_users
+        online_users = set(users)
+        users_event.set()
+        if users:
+            console.print(
+                "<Server> Online: " + ", ".join(users),
+                style="server",
+            )
+        else:
+            console.print("<Server> No users online.", style="server")
+
+    elif msg_type == "SIGNOUT_RESULT":
+        if payload.get("success"):
+            is_authenticated = False
+            client_username = None
+            console.print("<Server> Signed out successfully.", style="server")
+        else:
+            console.print(f"<Server> Signout failed: {msg_detail}", style="error")
 
     elif msg_type == "SERVER_ERROR":
         console.print(f"<Server> Error: {msg_detail}", style="error")
@@ -629,6 +664,15 @@ def receive_messages(sock: socket.socket) -> None:
             header = parts[0]
             if header == "NS_RESP" and len(parts) >= 3:
                 handle_ns_resp(sock, server_addr_global, parts[1], parts[2])
+                continue
+            if header == "NS_FAIL" and len(parts) >= 3:
+                peer = parts[1]
+                reason = parts[2]
+                entry = session_keys.setdefault(peer, {})
+                entry["state"] = "fail"
+                handshake_events.setdefault(peer, threading.Event()).set()
+                with patch_stdout(raw=True):
+                    console.print(f"<System> Handshake with {peer} failed: {reason}.", style="error")
                 continue
             if header == "NS_TICKET" and len(parts) >= 5:
                 handle_ns_ticket(sock, server_addr_global, parts[2], parts[3], parts[4])
@@ -780,6 +824,7 @@ def handle_signin(
     wait_start = time.time()
     while (
         auth_challenge_data is None
+        and not auth_successful_event.is_set()
         and time.time() - wait_start < config.auth_timeout
         and not stop_event.is_set()
     ):
@@ -826,12 +871,48 @@ def handle_signin(
                 exc_info=True,
             )
             client_username = None
+    elif auth_successful_event.is_set():
+        client_username = None
+        return
     else:
         console.print(
             "<Server> Signin failed: challenge timeout",
             style="error",
         )
         client_username = None
+
+
+def handle_logout(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Sign out from the server."""
+
+    global is_authenticated, client_username
+
+    if not is_authenticated:
+        console.print("<System> Error: not signed in.", style="error")
+        return
+
+    send_secure_command(sock, server_address, "SIGNOUT", {"nonce": generate_nonce()})
+    is_authenticated = False
+    client_username = None
+    console.print("<System> Logged out.", style="system")
+
+
+def handle_users(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Request list of online users from the server."""
+
+    if not is_authenticated:
+        console.print("<System> Error: not signed in.", style="error")
+        return
+
+    send_secure_command(sock, server_address, "USERS", {"nonce": generate_nonce()})
+
+
+def refresh_online_users(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Refresh the cached list of online users."""
+
+    users_event.clear()
+    send_secure_command(sock, server_address, "USERS", {"nonce": generate_nonce()})
+    users_event.wait(timeout=2.0)
 
 
 def handle_message(sock: socket.socket, server_address: tuple[str, int],
@@ -848,6 +929,10 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
     parts = action_input.split(" ", 2)
     if len(parts) > 2 and parts[2].strip():
         target_user, msg_content = parts[1], parts[2]
+        refresh_online_users(sock, server_address)
+        if online_users and target_user not in online_users:
+            console.print(f"<System> User '{target_user}' is offline.", style="error")
+            return
         entry = session_keys.get(target_user)
         if not entry or entry.get("state") != "complete" or (
             time.time() - entry.get("timestamp", 0) > SESSION_KEY_LIFETIME
@@ -969,9 +1054,12 @@ def handle_logs() -> None:
         console.print("<System> No log file found.", style="error")
 
 
-def handle_exit() -> None:
-    """Exit the application."""
+def handle_exit(sock: socket.socket | None = None,
+                server_address: tuple[str, int] | None = None) -> None:
+    """Exit the application, signing out if authenticated."""
 
+    if is_authenticated and sock and server_address:
+        handle_logout(sock, server_address)
     console.print("Exiting...", style="system")
     stop_event.set()
 
@@ -1004,6 +1092,10 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                     handle_signup(sock, server_address)
                 elif action_cmd == "signin":
                     handle_signin(sock, server_address)
+                elif action_cmd == "logout":
+                    handle_logout(sock, server_address)
+                elif action_cmd == "users":
+                    handle_users(sock, server_address)
                 elif action_cmd == "message":
                     handle_message(sock, server_address, action_input)
                 elif action_cmd == "broadcast":
@@ -1015,7 +1107,7 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                 elif action_cmd == "logs":
                     handle_logs()
                 elif action_cmd == "exit":
-                    handle_exit()
+                    handle_exit(sock, server_address)
                 else:
                     console.print(
                         f"<System> Error: unknown command '{action_input}'. "
@@ -1024,9 +1116,9 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                     )
 
             except EOFError:
-                stop_event.set()
+                handle_exit(sock, server_address)
             except KeyboardInterrupt:
-                stop_event.set()
+                handle_exit(sock, server_address)
             except Exception as exc:
                 logging.error(
                     "Error in client main loop: %s", exc, exc_info=True
@@ -1081,6 +1173,14 @@ def run_client(server_ip: str, server_port: int, cfg: ClientConfig) -> None:
     finally:
         logging.info("Client shutting down...")
         console.print("<System> Shutting down client...", style="system")
+        if client_sock and is_authenticated:
+            try:
+                send_secure_command(client_sock, server_addr, "SIGNOUT",
+                                   {"nonce": generate_nonce()})
+            except Exception as exc:
+                logging.error("Error sending SIGNOUT during shutdown: %s",
+                              exc,
+                              exc_info=True)
         stop_event.set()
         if client_sock:
             client_sock.close()

@@ -42,6 +42,30 @@ def recv_payload(sock, sk):
     decrypted = crypto_utils.decrypt_aes_gcm(sk, data.decode())
     return crypto_utils.deserialize_payload(decrypted)
 
+def sign_up(sock, sk, username, password):
+    send_command(sock, sk, "SECURE_SIGNUP", {"username": username, "password": password})
+    return recv_payload(sock, sk)
+
+def sign_in(sock, sk, username, password):
+    send_command(sock, sk, "AUTH_REQUEST", {"username": username})
+    chal = recv_payload(sock, sk)
+    if chal.get("type") != "AUTH_CHALLENGE":
+        return chal
+    salt = bytes.fromhex(chal["salt"])
+    key = crypto_utils.derive_password_verifier(password, salt)
+    proof = crypto_utils.compute_hmac_sha256(key, chal["challenge"])
+    proof_b64 = base64.b64encode(proof).decode()
+    send_command(sock, sk, "AUTH_RESPONSE", {"challenge_response": proof_b64, "client_nonce": str(uuid.uuid4())})
+    return recv_payload(sock, sk)
+
+def sign_out(sock, sk):
+    send_command(sock, sk, "SIGNOUT", {"nonce": str(uuid.uuid4())})
+    return recv_payload(sock, sk)
+
+def get_users(sock, sk):
+    send_command(sock, sk, "USERS", {"nonce": str(uuid.uuid4())})
+    return recv_payload(sock, sk)
+
 
 def sign_up_and_sign_in(sock, sk, username, password):
     send_command(sock, sk, "SECURE_SIGNUP", {"username": username, "password": password})
@@ -158,6 +182,42 @@ class ChatProtocolTest(unittest.TestCase):
         )
         ack = recv_payload(self.sock1, self.sk1)
         self.assertEqual(ack.get("status"), "BROADCAST_FAIL")
+
+    def test_duplicate_login_and_signout(self):
+        sign_up(self.sock1, self.sk1, "dupuser", "pw12345")
+        resp1 = sign_in(self.sock1, self.sk1, "dupuser", "pw12345")
+        self.assertTrue(resp1.get("success"))
+        resp2 = sign_in(self.sock2, self.sk2, "dupuser", "pw12345")
+        self.assertFalse(resp2.get("success"))
+        sign_out(self.sock1, self.sk1)
+        resp3 = sign_in(self.sock2, self.sk2, "dupuser", "pw12345")
+        self.assertTrue(resp3.get("success"))
+
+    def test_message_to_offline_user(self):
+        sign_up(self.sock1, self.sk1, "alice", "pw12345")
+        sign_up(self.sock2, self.sk2, "bob", "pw23456")
+        sign_in(self.sock1, self.sk1, "alice", "pw12345")
+        send_command(
+            self.sock1,
+            self.sk1,
+            "SECURE_MESSAGE",
+            {"to_user": "bob", "content": "hi", "timestamp": str(time.time())},
+        )
+        ack = recv_payload(self.sock1, self.sk1)
+        self.assertEqual(ack.get("status"), "MESSAGE_FAIL")
+
+    def test_users_command(self):
+        sign_up_and_sign_in(self.sock1, self.sk1, "alice", "pw12345")
+        sign_up_and_sign_in(self.sock2, self.sk2, "bob", "pw23456")
+        resp = get_users(self.sock1, self.sk1)
+        self.assertEqual(resp.get("type"), "USERS_LIST")
+        users = resp.get("users")
+        self.assertIn("alice", users)
+        self.assertIn("bob", users)
+        self.assertEqual(len(users), 2)
+        sign_out(self.sock2, self.sk2)
+        resp2 = get_users(self.sock1, self.sk1)
+        self.assertNotIn("bob", resp2.get("users"))
 
 
 if __name__ == "__main__":
