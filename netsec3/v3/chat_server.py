@@ -34,6 +34,7 @@ REQUEST_WINDOW_SECONDS = 60
 INTERNAL_NONCE_EXPIRY_SECONDS = 300
 TIMESTAMP_WINDOW_SECONDS = 60
 MAX_MSG_LENGTH = 512
+RELAY_HEADERS = {"NS_TICKET", "NS_AUTH", "NS_FIN", "CHAT", "BCAST"}
 
 user_credentials_cr = {}
 client_sessions = {}
@@ -150,6 +151,24 @@ def send_encrypted_response(sock, client_address, channel_sk, response_payload_d
         logging.error(f"Error sending encrypted response to {client_address}: {e}", exc_info=True)
 
 
+def relay_raw(sock, header, sender_addr, raw_blob):
+    """Relay raw message strings from one client to another."""
+    target, _, rest = raw_blob.partition(":")
+    if not rest:
+        logging.warning("Malformed %s from %s", header, sender_addr)
+        return
+    target_addr = None
+    for addr, s_data in client_sessions.items():
+        if s_data.get("username") == target and s_data.get("channel_sk"):
+            target_addr = addr
+            break
+    if not target_addr:
+        logging.info("%s target %s not found", header, target)
+        return
+    sock.sendto(f"{header}:{raw_blob}".encode("utf-8"), target_addr)
+    logging.debug("Relayed %s from %s to %s", header, sender_addr, target_addr)
+
+
 def server(port):
     """Run the UDP chat server on the given port."""
     load_cr_credentials()
@@ -203,6 +222,41 @@ def server(port):
 
             current_channel_sk = session["channel_sk"]
             session["last_seen"] = time.time()
+
+            if command_header in RELAY_HEADERS:
+                relay_raw(sock, command_header, client_addr, payload_b64_str)
+                continue
+
+            if command_header == "NS_REQ":
+                try:
+                    plain = crypto_utils.decrypt_aes_gcm(current_channel_sk, payload_b64_str).decode()
+                    peer, nonce1 = plain.split(":", 1)
+                except Exception as e:
+                    logging.warning("Failed to process NS_REQ from %s: %s", client_addr, e)
+                    continue
+                target_addr, target_sk = None, None
+                for addr, s_data in client_sessions.items():
+                    if s_data.get("username") == peer and s_data.get("channel_sk"):
+                        target_addr, target_sk = addr, s_data["channel_sk"]
+                        break
+                if not (target_addr and target_sk):
+                    logging.info("NS_REQ for offline user %s from %s", peer, client_addr)
+                    continue
+                session_key = os.urandom(crypto_utils.AES_KEY_SIZE)
+                ticket_bytes = crypto_utils.serialize_payload({
+                    "K_AB": base64.b64encode(session_key).decode(),
+                })
+                ticket = crypto_utils.encrypt_aes_gcm(target_sk, ticket_bytes)
+                resp_bytes = crypto_utils.serialize_payload({
+                    "nonce1": nonce1,
+                    "peer": peer,
+                    "K_AB": base64.b64encode(session_key).decode(),
+                    "ticket": ticket,
+                })
+                enc_blob = crypto_utils.encrypt_aes_gcm(current_channel_sk, resp_bytes)
+                sock.sendto(f"NS_RESP:{peer}:{enc_blob}".encode("utf-8"), client_addr)
+                logging.info("Issued session key for %s -> %s", session.get("username"), peer)
+                continue
 
             try:
                 decrypted_payload_bytes = crypto_utils.decrypt_aes_gcm(current_channel_sk, payload_b64_str)
