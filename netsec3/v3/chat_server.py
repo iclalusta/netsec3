@@ -387,6 +387,22 @@ def server(port):
                                         {"type": "GREETING_RESPONSE", "status": "GREETING_OK",
                                          "detail": f"Hello {session['username']}! Greeting received."})
 
+            elif command_header == "USERS":
+                logging.info(
+                    f"Processing USERS request from '{session['username']}'@{client_addr}"
+                )
+                online_list = list(active_usernames.keys())
+                send_encrypted_response(
+                    sock,
+                    client_addr,
+                    current_channel_sk,
+                    {
+                        "type": "USERS_LIST",
+                        "users": online_list,
+                        "detail": f"{len(online_list)} online",
+                    },
+                )
+
             elif command_header == "SIGNOUT":
                 username = session.get("username")
                 if username and active_usernames.get(username) == client_addr:

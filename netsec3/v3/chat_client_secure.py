@@ -112,6 +112,7 @@ def setup_environment(cfg: ClientConfig) -> None:
             "signup",
             "signin",
             "logout",
+            "users",
             "message",
             "broadcast",
             "greet",
@@ -130,6 +131,7 @@ def print_command_list() -> None:
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
         "logout      Logout from the server\n"
+        "users       List online users\n"
         "message     Send a private message: message <target> <content>\n"
         "broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -569,6 +571,16 @@ def handle_encrypted_payload(payload: dict) -> None:
                     entry.clear()
                     entry["state"] = "fail"
 
+    elif msg_type == "USERS_LIST":
+        users = payload.get("users", [])
+        if users:
+            console.print(
+                "<Server> Online: " + ", ".join(users),
+                style="server",
+            )
+        else:
+            console.print("<Server> No users online.", style="server")
+
     elif msg_type == "SIGNOUT_RESULT":
         if payload.get("success"):
             is_authenticated = False
@@ -880,6 +892,16 @@ def handle_logout(sock: socket.socket, server_address: tuple[str, int]) -> None:
     console.print("<System> Logged out.", style="system")
 
 
+def handle_users(sock: socket.socket, server_address: tuple[str, int]) -> None:
+    """Request list of online users from the server."""
+
+    if not is_authenticated:
+        console.print("<System> Error: not signed in.", style="error")
+        return
+
+    send_secure_command(sock, server_address, "USERS", {"nonce": generate_nonce()})
+
+
 def handle_message(sock: socket.socket, server_address: tuple[str, int],
                    action_input: str) -> None:
     """Send a private message to another user."""
@@ -1055,6 +1077,8 @@ def command_loop(sock: socket.socket, server_address: tuple[str, int]) -> None:
                     handle_signin(sock, server_address)
                 elif action_cmd == "logout":
                     handle_logout(sock, server_address)
+                elif action_cmd == "users":
+                    handle_users(sock, server_address)
                 elif action_cmd == "message":
                     handle_message(sock, server_address, action_input)
                 elif action_cmd == "broadcast":

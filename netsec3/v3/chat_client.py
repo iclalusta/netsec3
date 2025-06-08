@@ -69,7 +69,7 @@ def prompt_username(message: str) -> str:
     return uname
 
 command_completer = WordCompleter(
-    ["signup", "signin", "logout", "message", "broadcast", "greet", "help", "logs", "exit"],
+    ["signup", "signin", "logout", "users", "message", "broadcast", "greet", "help", "logs", "exit"],
     ignore_case=True,
 )
 
@@ -115,6 +115,7 @@ def print_command_list():
         "signup      Sign up with a new username and password\n"
         "signin      Log in with your credentials\n"
         "logout      Logout from the server\n"
+        "users       List online users\n"
         "message     Send a private message: message <target> <content>\n"
         f"broadcast   Send a message to all users: broadcast <content>\n"
         "greet       Send a friendly greeting\n"
@@ -304,6 +305,17 @@ def handle_encrypted_payload(payload):
             style="server",
             markup=False,
         )
+
+    elif msg_type == "USERS_LIST":
+        users = payload.get("users", [])
+        if users:
+            console.print(
+                "<Server> Online: " + ", ".join(users),
+                style="server",
+                markup=False,
+            )
+        else:
+            console.print("<Server> No users online.", style="server", markup=False)
 
     elif msg_type == "SIGNOUT_RESULT":
         if payload.get("success"):
@@ -562,6 +574,12 @@ def client_main_loop(sock, server_address):
                         markup=False,
                     )
                 print_command_list()
+            elif action_cmd == "users":
+                if not is_authenticated:
+                    console.print("<System> Error: not signed in.", style="error", markup=False)
+                else:
+                    send_secure_command_to_server(sock, server_address, "USERS", {"nonce": generate_nonce()})
+                print_command_list()
 
             elif action_cmd == "message":
                 if not is_authenticated:
@@ -639,6 +657,7 @@ def client_main_loop(sock, server_address):
                     "signup      Sign up with a new username and password\n"
                     "signin      Log in with your credentials\n"
                     "logout      Logout from the server\n"
+                    "users       List online users\n"
                     "message     Send a private message: message <target> <content>\n"
                     "broadcast   Send a message to all users: broadcast <content>\n"
                     "greet       Send a friendly greeting\n"

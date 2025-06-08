@@ -62,6 +62,10 @@ def sign_out(sock, sk):
     send_command(sock, sk, "SIGNOUT", {"nonce": str(uuid.uuid4())})
     return recv_payload(sock, sk)
 
+def get_users(sock, sk):
+    send_command(sock, sk, "USERS", {"nonce": str(uuid.uuid4())})
+    return recv_payload(sock, sk)
+
 
 def sign_up_and_sign_in(sock, sk, username, password):
     send_command(sock, sk, "SECURE_SIGNUP", {"username": username, "password": password})
@@ -201,6 +205,19 @@ class ChatProtocolTest(unittest.TestCase):
         )
         ack = recv_payload(self.sock1, self.sk1)
         self.assertEqual(ack.get("status"), "MESSAGE_FAIL")
+
+    def test_users_command(self):
+        sign_up_and_sign_in(self.sock1, self.sk1, "alice", "pw12345")
+        sign_up_and_sign_in(self.sock2, self.sk2, "bob", "pw23456")
+        resp = get_users(self.sock1, self.sk1)
+        self.assertEqual(resp.get("type"), "USERS_LIST")
+        users = resp.get("users")
+        self.assertIn("alice", users)
+        self.assertIn("bob", users)
+        self.assertEqual(len(users), 2)
+        sign_out(self.sock2, self.sk2)
+        resp2 = get_users(self.sock1, self.sk1)
+        self.assertNotIn("bob", resp2.get("users"))
 
 
 if __name__ == "__main__":
