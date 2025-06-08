@@ -323,7 +323,15 @@ def send_ns_ticket(sock: socket.socket, server_address: tuple[str, int],
     nonce2 = generate_nonce_bytes()
     entry["nonce2"] = nonce2
     enc_nonce2 = crypto_utils.encrypt_aes_gcm_with_nonce(key, nonce2, nonce2)
-    send_relay_message(sock, server_address, "NS_TICKET", peer, entry["ticket"], enc_nonce2)
+    send_relay_message(
+        sock,
+        server_address,
+        "NS_TICKET",
+        peer,
+        client_username or "",
+        entry["ticket"],
+        enc_nonce2,
+    )
     entry["state"] = "ticket_sent"
     logging.info("Sent NS_TICKET to %s", peer)
 
@@ -347,15 +355,21 @@ def handle_ns_resp(sock: socket.socket, server_address: tuple[str, int], peer: s
     send_ns_ticket(sock, server_address, peer)
 
 
-def handle_ns_ticket(sock: socket.socket, server_address: tuple[str, int], peer: str,
-                     ticket: str, encrypted_nonce2: str) -> None:
-    """Handle incoming NS_TICKET from peer."""
+def handle_ns_ticket(
+    sock: socket.socket,
+    server_address: tuple[str, int],
+    sender: str,
+    ticket: str,
+    encrypted_nonce2: str,
+) -> None:
+    """Handle incoming NS_TICKET from another client."""
     try:
         ticket_plain = crypto_utils.decrypt_aes_gcm(channel_sk, ticket)
         tdata = crypto_utils.deserialize_payload(ticket_plain)
         key_bytes = base64.b64decode(tdata.get("K_AB", ""))
+        peer = tdata.get("sender", sender)
     except Exception as exc:
-        logging.error("Failed to process ticket from %s: %s", peer, exc,
+        logging.error("Failed to process ticket from %s: %s", sender, exc,
                       exc_info=True)
         return
     entry = session_keys.setdefault(peer, {})
@@ -367,7 +381,7 @@ def handle_ns_ticket(sock: socket.socket, server_address: tuple[str, int], peer:
     n2_minus = (int.from_bytes(nonce2, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
     plaintext = n2_minus.to_bytes(NS_NONCE_SIZE, "big") + nonce3
     enc_auth = crypto_utils.encrypt_aes_gcm_with_nonce(key_bytes, nonce3, plaintext)
-    send_relay_message(sock, server_address, "NS_AUTH", peer, enc_auth)
+    send_relay_message(sock, server_address, "NS_AUTH", peer, client_username or "", enc_auth)
     entry["state"] = "auth_sent"
 
 
@@ -390,17 +404,20 @@ def complete_ns_auth(sock: socket.socket, server_address: tuple[str, int], peer:
         return
     entry["nonce3"] = nonce3
     n3_minus = (int.from_bytes(nonce3, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
-    enc_fin = crypto_utils.encrypt_aes_gcm_with_nonce(key, nonce3,
-                                                     n3_minus.to_bytes(NS_NONCE_SIZE, "big"))
-    send_relay_message(sock, server_address, "NS_FIN", peer, enc_fin)
+    enc_fin = crypto_utils.encrypt_aes_gcm_with_nonce(
+        key, nonce3, n3_minus.to_bytes(NS_NONCE_SIZE, "big")
+    )
+    send_relay_message(
+        sock, server_address, "NS_FIN", peer, client_username or "", enc_fin
+    )
     entry["state"] = "complete"
     if peer in handshake_events:
         handshake_events[peer].set()
 
 
-def handle_ns_fin(peer: str, encrypted_fin: str) -> None:
+def handle_ns_fin(sender: str, encrypted_fin: str) -> None:
     """Verify final handshake message from peer."""
-    entry = session_keys.get(peer)
+    entry = session_keys.get(sender)
     if not entry:
         return
     key = entry.get("key")
@@ -408,11 +425,13 @@ def handle_ns_fin(peer: str, encrypted_fin: str) -> None:
     if not (key and nonce3):
         return
     data = crypto_utils.decrypt_aes_gcm(key, encrypted_fin)
-    expected = ((int.from_bytes(nonce3, "big") - 1) % (1 << (8 * NS_NONCE_SIZE)))
+    expected = (
+        (int.from_bytes(nonce3, "big") - 1) % (1 << (8 * NS_NONCE_SIZE))
+    )
     if data == expected.to_bytes(NS_NONCE_SIZE, "big"):
         entry["state"] = "complete"
-        if peer in handshake_events:
-            handshake_events[peer].set()
+        if sender in handshake_events:
+            handshake_events[sender].set()
 
 
 # ---------------------------------------------------------------------------
@@ -588,45 +607,45 @@ def receive_messages(sock: socket.socket) -> None:
                 )
                 continue
 
-            parts = message_str.split(":", 3)
+            parts = message_str.split(":", 4)
             header = parts[0]
             if header == "NS_RESP" and len(parts) >= 3:
                 handle_ns_resp(sock, server_addr_global, parts[1], parts[2])
                 continue
-            if header == "NS_TICKET" and len(parts) >= 4:
-                handle_ns_ticket(sock, server_addr_global, parts[1], parts[2], parts[3])
+            if header == "NS_TICKET" and len(parts) >= 5:
+                handle_ns_ticket(sock, server_addr_global, parts[2], parts[3], parts[4])
                 continue
-            if header == "NS_AUTH" and len(parts) >= 3:
-                complete_ns_auth(sock, server_addr_global, parts[1], parts[2])
+            if header == "NS_AUTH" and len(parts) >= 4:
+                complete_ns_auth(sock, server_addr_global, parts[2], parts[3])
                 continue
-            if header == "NS_FIN" and len(parts) >= 3:
-                handle_ns_fin(parts[1], parts[2])
+            if header == "NS_FIN" and len(parts) >= 4:
+                handle_ns_fin(parts[2], parts[3])
                 continue
-            if header == "CHAT" and len(parts) >= 4:
-                peer = parts[1]
-                nonce = base64.b64decode(parts[2])
-                ciphertext = parts[3]
-                entry = session_keys.get(peer)
+            if header == "CHAT" and len(parts) >= 5:
+                sender = parts[2]
+                nonce = base64.b64decode(parts[3])
+                ciphertext = parts[4]
+                entry = session_keys.get(sender)
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
                         with patch_stdout():
-                            console.print(f"<{peer}> {pt.decode()}", style="server")
+                            console.print(f"<{sender}> {pt.decode()}", style="server")
                     except Exception as exc:
-                        logging.warning("Failed to decrypt CHAT from %s: %s", peer, exc)
+                        logging.warning("Failed to decrypt CHAT from %s: %s", sender, exc)
                 continue
-            if header == "BCAST" and len(parts) >= 4:
-                peer = parts[1]
-                nonce = base64.b64decode(parts[2])
-                ciphertext = parts[3]
-                entry = session_keys.get(peer)
+            if header == "BCAST" and len(parts) >= 5:
+                sender = parts[2]
+                nonce = base64.b64decode(parts[3])
+                ciphertext = parts[4]
+                entry = session_keys.get(sender)
                 if entry and entry.get("key"):
                     try:
                         pt = crypto_utils.decrypt_aes_gcm_detached(entry["key"], nonce, ciphertext)
                         with patch_stdout():
-                            console.print(f"<Bcast {peer}> {pt.decode()}", style="server")
+                            console.print(f"<Bcast {sender}> {pt.decode()}", style="server")
                     except Exception as exc:
-                        logging.warning("Failed to decrypt BCAST from %s: %s", peer, exc)
+                        logging.warning("Failed to decrypt BCAST from %s: %s", sender, exc)
                 continue
 
             try:
@@ -829,6 +848,7 @@ def handle_message(sock: socket.socket, server_address: tuple[str, int],
             server_address,
             "CHAT",
             target_user,
+            client_username or "",
             base64.b64encode(nonce).decode(),
             ct,
         )
@@ -862,14 +882,15 @@ def handle_broadcast(sock: socket.socket, server_address: tuple[str, int],
                 continue
             nonce = generate_nonce_bytes()
             ct = crypto_utils.encrypt_aes_gcm_detached(entry["key"], nonce, msg_content.encode())
-            send_relay_message(
-                sock,
-                server_address,
-                "BCAST",
-                peer,
-                base64.b64encode(nonce).decode(),
-                ct,
-            )
+                send_relay_message(
+                    sock,
+                    server_address,
+                    "BCAST",
+                    peer,
+                    client_username or "",
+                    base64.b64encode(nonce).decode(),
+                    ct,
+                )
         console.print(f"<You> broadcast: {msg_content}", style="client")
     else:
         console.print(

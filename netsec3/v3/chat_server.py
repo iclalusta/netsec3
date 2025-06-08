@@ -245,6 +245,7 @@ def server(port):
                 session_key = os.urandom(crypto_utils.AES_KEY_SIZE)
                 ticket_bytes = crypto_utils.serialize_payload({
                     "K_AB": base64.b64encode(session_key).decode(),
+                    "sender": session.get("username"),
                 })
                 ticket = crypto_utils.encrypt_aes_gcm(target_sk, ticket_bytes)
                 resp_bytes = crypto_utils.serialize_payload({
