@@ -302,6 +302,8 @@ def server(port):
                 server_utils.send_encrypted_response(sock, client_addr, current_channel_sk,
                                         {"type": "SIGNOUT_RESULT", "success": True,
                                          "detail": "Signed out."})
+                if username:
+                    server_utils.notify_user_logout(sock, username)
 
             elif command_header == "SECURE_MESSAGE":
                 to_user = req_payload.get("to_user")
@@ -373,6 +375,8 @@ def server(port):
                 if username_left and active_usernames.get(username_left) == client_addr:
                     del active_usernames[username_left]
                 del client_sessions[client_addr]
+                if username_left:
+                    server_utils.notify_user_logout(sock, username_left)
             else:
                 logging.warning(f"ConnectionResetError from {client_addr} (no active session).")
         except UnicodeDecodeError as ude:  # Should be less common now

@@ -588,6 +588,14 @@ def handle_encrypted_payload(payload: dict) -> None:
         else:
             console.print("<Server> No users online.", style="server")
 
+    elif msg_type == "USER_LOGOUT":
+        user = payload.get("user")
+        if user:
+            session_keys.pop(user, None)
+            handshake_events.pop(user, None)
+            online_users.discard(user)
+            console.print(f"<Server> {user} signed out.", style="server")
+
     elif msg_type == "SIGNOUT_RESULT":
         if payload.get("success"):
             is_authenticated = False

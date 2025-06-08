@@ -64,7 +64,11 @@ def sign_out(sock, sk):
 
 def get_users(sock, sk):
     send_command(sock, sk, "USERS", {"nonce": str(uuid.uuid4())})
-    return recv_payload(sock, sk)
+    payload = recv_payload(sock, sk)
+    # Skip asynchronous logout notifications
+    if payload.get("type") == "USER_LOGOUT":
+        payload = recv_payload(sock, sk)
+    return payload
 
 
 def sign_up_and_sign_in(sock, sk, username, password):
