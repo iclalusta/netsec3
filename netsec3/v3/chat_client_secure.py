@@ -799,6 +799,7 @@ def handle_signin(
     wait_start = time.time()
     while (
         auth_challenge_data is None
+        and not auth_successful_event.is_set()
         and time.time() - wait_start < config.auth_timeout
         and not stop_event.is_set()
     ):
@@ -845,6 +846,9 @@ def handle_signin(
                 exc_info=True,
             )
             client_username = None
+    elif auth_successful_event.is_set():
+        client_username = None
+        return
     else:
         console.print(
             "<Server> Signin failed: challenge timeout",
