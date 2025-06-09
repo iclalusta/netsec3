@@ -74,6 +74,18 @@ def encrypt_aes_gcm(key, plaintext_bytes, associated_data=None):
     return base64.b64encode(encrypted_blob).decode('utf-8')
 
 
+def encrypt_aes_gcm_with_nonce(key, nonce, plaintext_bytes, associated_data=None):
+    """Encrypt using AES-GCM with caller-supplied nonce, returning base64 blob."""
+    if len(key) != AES_KEY_SIZE:
+        raise ValueError(f"AES key must be {AES_KEY_SIZE} bytes long.")
+    if len(nonce) != AES_GCM_NONCE_SIZE:
+        raise ValueError(f"Nonce must be {AES_GCM_NONCE_SIZE} bytes long.")
+    aesgcm = AESGCM(key)
+    ad = associated_data if associated_data else b''
+    ciphertext_with_tag = aesgcm.encrypt(nonce, plaintext_bytes, ad)
+    return base64.b64encode(nonce + ciphertext_with_tag).decode('utf-8')
+
+
 def decrypt_aes_gcm(key, b64_encrypted_blob, associated_data=None):
     if len(key) != AES_KEY_SIZE:
         raise ValueError(f"AES key must be {AES_KEY_SIZE} bytes long.")
@@ -86,6 +98,33 @@ def decrypt_aes_gcm(key, b64_encrypted_blob, associated_data=None):
         plaintext_bytes = aesgcm.decrypt(nonce, ciphertext_with_tag, ad)
         return plaintext_bytes
     except Exception as e:  # Handles InvalidTag from cryptography library
+        raise ValueError("Decryption failed. Ciphertext may have been tampered or key is incorrect.") from e
+
+
+def encrypt_aes_gcm_detached(key, nonce, plaintext_bytes, associated_data=None):
+    """Encrypt with AES-GCM returning only ciphertext+tag as base64."""
+    if len(key) != AES_KEY_SIZE:
+        raise ValueError(f"AES key must be {AES_KEY_SIZE} bytes long.")
+    if len(nonce) != AES_GCM_NONCE_SIZE:
+        raise ValueError(f"Nonce must be {AES_GCM_NONCE_SIZE} bytes long.")
+    aesgcm = AESGCM(key)
+    ad = associated_data if associated_data else b''
+    ciphertext_with_tag = aesgcm.encrypt(nonce, plaintext_bytes, ad)
+    return base64.b64encode(ciphertext_with_tag).decode('utf-8')
+
+
+def decrypt_aes_gcm_detached(key, nonce, b64_ciphertext, associated_data=None):
+    """Decrypt AES-GCM ciphertext when nonce is transmitted separately."""
+    if len(key) != AES_KEY_SIZE:
+        raise ValueError(f"AES key must be {AES_KEY_SIZE} bytes long.")
+    if len(nonce) != AES_GCM_NONCE_SIZE:
+        raise ValueError(f"Nonce must be {AES_GCM_NONCE_SIZE} bytes long.")
+    ciphertext_with_tag = base64.b64decode(b64_ciphertext)
+    aesgcm = AESGCM(key)
+    ad = associated_data if associated_data else b''
+    try:
+        return aesgcm.decrypt(nonce, ciphertext_with_tag, ad)
+    except Exception as e:
         raise ValueError("Decryption failed. Ciphertext may have been tampered or key is incorrect.") from e
 
 
